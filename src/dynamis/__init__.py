@@ -9,7 +9,7 @@ from .dynamis_core import (
     calculate_hurst,
     is_predictable_regime,
 )
-from .hurst_geo import hurst_features, hurst_spectral, hurst_temporal
+from .hurst_geo import hurst_features, hurst_regional, hurst_spectral, hurst_temporal
 from .innovation_loss import dynamis_loss, expected_calibration_error, innovation_loss
 from .phenology_prior import (
     N_PHENOPHASES,
@@ -33,6 +33,7 @@ __all__ = [
     # geo
     "hurst_temporal",
     "hurst_spectral",
+    "hurst_regional",
     "hurst_features",
     # physics
     "ChaosAttention",

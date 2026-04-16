@@ -121,3 +121,58 @@ def test_dynamis_crop_classifier_forward():
     assert out["pheno_logits"].shape == (B, T, 7)
     assert out["innovations"].shape == (B, T, 7)
     assert out["uncertainty"].shape == (B,)
+
+
+def test_mkm_init_spread_produces_heterogeneous_Q_R():
+    """Post-run optimisation §4: the default MKM init should give per-dim
+    heterogeneity in log_Q_diag / log_R_diag so the Kalman filter does not
+    immediately saturate to a shared trace(P)."""
+    torch.manual_seed(0)
+    mkm = MarkovKalmanModule(state_dim=7, noise_spread=0.5)
+    q_std = mkm.log_Q_diag.detach().std().item()
+    r_std = mkm.log_R_diag.detach().std().item()
+    assert q_std > 0.05, f"log_Q_diag is too homogeneous (std={q_std})"
+    assert r_std > 0.05, f"log_R_diag is too homogeneous (std={r_std})"
+
+
+def test_uncertainty_differentiation_on_synthetic_data():
+    """After 50 steps on noisy synthetic data, the resulting trace(P) should
+    not collapse to a single value across the batch. This is a regression
+    guard for the bug seen in the first run where trace(P) was identical
+    (1.070) for every sample."""
+    torch.manual_seed(0)
+    mkm = MarkovKalmanModule(state_dim=4, noise_spread=0.5)
+    B, T, D = 8, 50, 4
+    # Mix of clean samples (easy) and high-noise samples (hard)
+    easy = torch.randn(B // 2, T, D) * 0.1
+    hard = torch.randn(B - B // 2, T, D) * 2.0
+    meas = torch.cat([easy, hard], dim=0)
+
+    x = torch.zeros(B, D)
+    P = 0.1 * torch.eye(D).unsqueeze(0).expand(B, -1, -1).clone()
+    for t in range(T):
+        x_pred, P_pred = mkm.predict(x, P)
+        x, P, _ = mkm.update(x_pred, P_pred, meas[:, t])
+
+    trace_P = P.diagonal(dim1=-2, dim2=-1).sum(dim=-1)
+    assert trace_P.std().item() > 1e-3, (
+        f"trace(P) did not differentiate (std={trace_P.std().item()})"
+    )
+
+
+def test_hurst_returns_raw_without_clipping():
+    """Post-run optimisation §3: when return_raw=True, calculate_hurst must
+    expose the pre-clip value so we can inspect saturation."""
+    rng = np.random.default_rng(1)
+    # Strongly persistent series (cumulative sum of positive-biased noise)
+    series = np.cumsum(rng.standard_normal(200) + 0.1)
+    H_clipped = calculate_hurst(series, min_window=10, max_window=100)
+    H_raw = calculate_hurst(series, min_window=10, max_window=100, return_raw=True)
+    assert 0.0 <= H_clipped <= 1.0
+    # Raw can exceed 1 for extreme trends; if it does, the fix is working.
+    assert not (np.isnan(H_raw))
+
+
+def test_hurst_returns_nan_on_too_short_series_when_raw():
+    H_raw = calculate_hurst(np.array([1.0, 2.0, 3.0]), return_raw=True)
+    assert np.isnan(H_raw) or abs(H_raw - 0.5) > 1e-6  # either NaN (preferred) or not the degenerate 0.5

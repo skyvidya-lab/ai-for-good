@@ -112,74 +112,73 @@ class HilbertEmbedding:
 # SECTION 1.5: HURST EXPONENT (Regime Filter / Gatekeeper)
 # ==============================================================================
 
-def calculate_hurst(series: np.ndarray, min_window: int = 10, max_window: int = 100) -> float:
+def calculate_hurst(
+    series: np.ndarray,
+    min_window: int = 10,
+    max_window: int = 100,
+    return_raw: bool = False,
+    min_regression_points: int = 3,
+) -> float:
     """
     Calculate the Hurst Exponent using Rescaled Range (R/S) Analysis.
-    
+
     H < 0.5: Anti-persistent (Mean Reverting)
     H = 0.5: Random Walk (Brownian Motion) - NO MEMORY
     H > 0.5: Persistent (Trending)
-    
+
     Args:
-        series: 1D NumPy array of prices or log-returns.
-        min_window: Minimum window size for R/S calculation.
-        max_window: Maximum window size.
-        
+        series: 1D NumPy array of values.
+        min_window: minimum window size for R/S calculation.
+        max_window: maximum window size.
+        return_raw: if True, skip the [0, 1] clip so callers can inspect
+            saturation (v1 always clipped, causing all values to hit 1.0
+            on short monotonic series — see POST-RUN OPTIMIZATION PLAN §3).
+        min_regression_points: require this many distinct window sizes before
+            attempting the log-log regression. Prevents degenerate H on very
+            sparse series.
+
     Returns:
-        Hurst exponent (float between 0 and 1).
+        Hurst exponent (float; clipped to [0, 1] unless `return_raw`).
     """
     if len(series) < max_window:
         max_window = len(series) // 2
     if max_window < min_window:
-        return 0.5  # Not enough data, assume random
-    
-    # Generate window sizes (powers of 2 or linear)
-    window_sizes = []
+        return float("nan") if return_raw else 0.5  # explicit "unknown"
+
+    # Log-spaced window sizes
+    window_sizes: list[int] = []
     w = min_window
     while w <= max_window:
         window_sizes.append(w)
-        w = int(w * 1.5)  # Logarithmic spacing
-    
-    rs_values = []
-    
+        w = int(w * 1.5)
+
+    rs_values: list[tuple[int, float]] = []
     for window in window_sizes:
-        rs_list = []
+        rs_list: list[float] = []
         num_windows = len(series) // window
-        
         for i in range(num_windows):
             chunk = series[i * window : (i + 1) * window]
             if len(chunk) < 2:
                 continue
-                
-            # Mean-centered cumulative deviation
-            mean_val = np.mean(chunk)
-            deviation = chunk - mean_val
+            deviation = chunk - np.mean(chunk)
             cumulative = np.cumsum(deviation)
-            
-            # Range
-            R = np.max(cumulative) - np.min(cumulative)
-            
-            # Standard Deviation
-            S = np.std(chunk, ddof=1)
-            
-            if S > 1e-10:  # Avoid division by zero
+            R = float(np.max(cumulative) - np.min(cumulative))
+            S = float(np.std(chunk, ddof=1))
+            if S > 1e-10:
                 rs_list.append(R / S)
-        
-        if len(rs_list) > 0:
-            rs_values.append((window, np.mean(rs_list)))
-    
-    if len(rs_values) < 2:
-        return 0.5  # Not enough data points for regression
-    
-    # Linear regression: log(R/S) = H * log(n) + c
+        if rs_list:
+            rs_values.append((window, float(np.mean(rs_list))))
+
+    if len(rs_values) < min_regression_points:
+        return float("nan") if return_raw else 0.5
+
     log_windows = np.log([x[0] for x in rs_values])
     log_rs = np.log([x[1] for x in rs_values])
-    
-    # Least squares fit
-    H = np.polyfit(log_windows, log_rs, 1)[0]
-    
-    # Clamp to valid range
-    return float(np.clip(H, 0.0, 1.0))
+    H_raw = float(np.polyfit(log_windows, log_rs, 1)[0])
+
+    if return_raw:
+        return H_raw
+    return float(np.clip(H_raw, 0.0, 1.0))
 
 
 def is_predictable_regime(series: np.ndarray, threshold: float = 0.05) -> Tuple[bool, float, str]:
@@ -263,22 +262,32 @@ class MarkovKalmanModule(nn.Module):
     """
     Differentiable Kalman Filter with Learnable Dynamics.
     Unlike classical KF, the matrices A, H, Q, R are nn.Parameters.
-    
+
     Args:
         state_dim: Dimension of the latent state.
+        noise_spread: standard deviation of the per-dim jitter applied to the
+            log_Q / log_R diagonals at init. Zero = homogeneous init (old
+            behaviour). Non-zero = spread over [-3, -1] for Q and [-2, 0]
+            for R — avoids the saturation observed in the first run where
+            every sample had trace(P) ≈ 1.07.
     """
-    def __init__(self, state_dim: int):
+    def __init__(self, state_dim: int, noise_spread: float = 0.5):
         super().__init__()
         self.state_dim = state_dim
-        
+
         # Learnable Transition: x_t = A @ x_{t-1}
         self.A = nn.Parameter(torch.eye(state_dim))
         # Learnable Observation: z_t = H @ x_t
         self.H = nn.Parameter(torch.eye(state_dim))
-        # Process Noise Covariance (log-diagonal for positivity)
-        self.log_Q_diag = nn.Parameter(torch.zeros(state_dim) - 2.0)
-        # Measurement Noise Covariance
-        self.log_R_diag = nn.Parameter(torch.zeros(state_dim) - 1.0)
+
+        # Process Noise Covariance (log-diagonal for positivity).
+        # Spread around -2 so different state dimensions have distinct starting
+        # dynamics; this is what lets the network learn differential uncertainty.
+        q_init = -2.0 + noise_spread * (2 * torch.rand(state_dim) - 1)
+        self.log_Q_diag = nn.Parameter(q_init)
+        # Measurement Noise Covariance — spread around -1 (smaller than Q by design)
+        r_init = -1.0 + noise_spread * (2 * torch.rand(state_dim) - 1)
+        self.log_R_diag = nn.Parameter(r_init)
 
     def predict(
         self, 

@@ -18,7 +18,6 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from ..dynamis.chaos_attention import ChaosAttention
 from ..dynamis.dynamis_core import Executor, MarkovKalmanModule
@@ -34,6 +33,8 @@ class DynamisModelConfig:
     n_crops: int = 3
     use_phenology_prior: bool = True
     lambda_prior_strength: float = 0.5  # 0=random init, 1=hard prior
+    p_init_scale: float = 0.1  # initial P = p_init_scale * eye(state_dim)
+    mkm_noise_spread: float = 0.5  # heterogeneity in log_Q / log_R init
 
 
 class DynamisCropClassifier(nn.Module):
@@ -51,7 +52,7 @@ class DynamisCropClassifier(nn.Module):
             hidden_dim=c.hidden_dim,
             output_dim=None,
         )
-        self.mkm = MarkovKalmanModule(state_dim=c.state_dim)
+        self.mkm = MarkovKalmanModule(state_dim=c.state_dim, noise_spread=c.mkm_noise_spread)
 
         if c.use_phenology_prior:
             with torch.no_grad():
@@ -96,10 +97,18 @@ class DynamisCropClassifier(nn.Module):
 
         h = self.input_proj(x)  # (B, T, hidden)
 
-        # MKM rollout
+        # MKM rollout — start with a smaller-than-identity P so the filter is
+        # not saturated at t=0 (the first run had trace(P) ≈ 1.07 for every
+        # sample because P_init = I led to instant equilibrium).
         h_exec = torch.zeros(B, self.cfg.hidden_dim, device=device)
         x_mkm = torch.zeros(B, self.cfg.state_dim, device=device)
-        P_mkm = torch.eye(self.cfg.state_dim, device=device).unsqueeze(0).expand(B, -1, -1).clone()
+        P_mkm = (
+            self.cfg.p_init_scale
+            * torch.eye(self.cfg.state_dim, device=device)
+            .unsqueeze(0)
+            .expand(B, -1, -1)
+            .clone()
+        )
 
         state_seq = []
         innov_seq = []

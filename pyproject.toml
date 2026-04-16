@@ -22,6 +22,7 @@ include = ["src*"]
 testpaths = ["tests"]
 python_files = "test_*.py"
 addopts = "-ra -q"
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
