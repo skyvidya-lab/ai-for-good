@@ -43,7 +43,8 @@ background/ai-and-space-computing-challenge/Guide to the Second Round_track1/tes
 !background/ai-and-space-computing-challenge/Guide to the Second Round_track1/analise-dataset.md
 
 # Model artefacts
-models/
+/models/
+!src/models/
 results/
 submissions/
 reports/
