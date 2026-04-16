@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dynamis-terra"
+version = "0.1.0"
+description = "Physics-informed crop type + phenophase classification from Sentinel-2 (ITU AI and Space Computing Challenge 2026, Track 1)"
+authors = [{ name = "Bonanza / Dynamis Team" }]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+
+[project.urls]
+challenge = "https://spaceaichallenge.zero2x.org/"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-ra -q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]

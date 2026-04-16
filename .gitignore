@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data — DO NOT commit datasets
+background/ai-and-space-computing-challenge/Guide to the Second Round_track1/test_input_sample/
+*.tiff
+*.tif
+*.TIFF
+*.TIF
+*.zip
+!requirements.txt
+
+# Large docx/pdf references (keep in Drive or separate workspace)
+*.docx
+*.pdf
+# Except the dataset analysis markdown we care about
+!background/ai-and-space-computing-challenge/Guide to the Second Round_track1/analise-dataset.md
+
+# Model artefacts
+models/
+results/
+submissions/
+reports/
+!docs/**
+*.pt
+*.pkl
+*.ckpt
+
+# Local sample extract
+sample/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Claude Code per-user settings
+.claude/settings.local.json

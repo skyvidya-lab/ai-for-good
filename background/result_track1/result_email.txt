@@ -1,0 +1,37 @@
+Dear Participants,
+
+We are pleased to inform you that your team has advanced to the Final Round of the ITU AI and Space Computing Challenge 2026. 
+
+Based on your preliminary performance, you have been shortlisted in the following track:
+Track: 1
+
+The Final Round consists of two components:
+Model Evaluation: Submit your model to the official platform for unified testing and leaderboard ranking.
+Solution Proposal: Submit a slides with presentation video to show your solution for the track.
+Important Dates:
+Validation Environment Opens from: 6th April 2026(UTC)  until 7th May 2026(UTC)
+Solution Submission Opens from: 6th April 2026 (UTC) until 10th May 2026(UTC)
+Late submissions will not be accepted.
+
+All materials and instructions are available at:
+https://spaceaichallenge.zero2x.org/competition-instruction
+https://spaceaichallenge.zero2x.org/competition-topic1
+https://spaceaichallenge.zero2x.org/competition-topic2
+https://spaceaichallenge.zero2x.org/competition-topic3
+https://spaceaichallenge.zero2x.org/competition-submit
+https://spaceaichallenge.zero2x.org/competition-submit
+
+These websites will be updated on 5th April 2026. 
+Please carefully review the validation environment user guide to ensure smooth model submission.
+
+For technical support, please contact:
+Email: spaceapp@zhejianglab.org
+DingTalk Group ID: lnn19940969
+We look forward to your continued excellence in the Final Round.
+Best regards,
+Organizing Committee
+ITU AI and Space Computing Challenge 2026
+
+Additional Call for Papers
+Additionally, participants are invited to submit relevant research contributions to the ITU Journal on Future and Evolving Technologies (J-FET) Special Issue on AI and Space Computing.
+For more details on the call for papers and submission guidelines, please visit: https://www.itu.int/en/journal/j-fet/2026/003/Pages/default.aspx
