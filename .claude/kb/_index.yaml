@@ -1,10 +1,13 @@
 # Dynamis Terra — Knowledge Base Index
 # Machine-readable registry for KB domains (pattern from AgentSpec v3.0.0)
 
-version: "1.0.0"
+version: "1.1.0"
 project: "Dynamis Terra"
 challenge: "ITU AI and Space Computing Challenge 2026 — Track 1 Final Round"
 last_updated: "2026-04-17"
+changelog:
+  - "1.1.0 (2026-04-17): +pyro, +kalman-bayesian, +markov-chain domains"
+  - "1.0.0 (2026-04-17): initial registry (dynamis, sentinel2, crop-science, challenge)"
 
 # File size limits (single source of truth)
 limits:
@@ -96,8 +99,72 @@ domains:
     agents:
       - domain/submission-builder
 
+  pyro:
+    status: "reference"
+    entry_point: pyro/index.md
+    quick_reference: pyro/quick-reference.md
+    description: "Universal probabilistic programming — Pyro (PyTorch) and NumPyro (JAX). Candidate for v5+ Bayesian MKM."
+    concepts:
+      - pyro/concepts/pyro-vs-numpyro.md
+      - pyro/concepts/core-primitives.md
+      - pyro/concepts/inference-algorithms.md
+    patterns:
+      - pyro/patterns/svi-elbo.md
+      - pyro/patterns/mcmc-nuts.md
+      - pyro/patterns/probabilistic-dynamis-model.md
+    external:
+      - "https://pyro.ai/"
+      - "https://github.com/pyro-ppl/pyro"
+      - "https://github.com/pyro-ppl/numpyro"
+    license: Apache-2.0
+
+  kalman-bayesian:
+    status: "reference"
+    entry_point: kalman-bayesian/index.md
+    quick_reference: kalman-bayesian/quick-reference.md
+    description: "Foundational KF theory (Labbe book). Canon for our MKM implementation."
+    concepts:
+      - kalman-bayesian/concepts/kalman-basics.md
+      - kalman-bayesian/concepts/innovation-and-gain.md
+      - kalman-bayesian/concepts/designing-q-r.md
+      - kalman-bayesian/concepts/multivariate-state-space.md
+    patterns:
+      - kalman-bayesian/patterns/linear-kalman-filter.md
+      - kalman-bayesian/patterns/learnable-kalman-pytorch.md
+    external:
+      - "https://rlabbe.github.io/Kalman-and-Bayesian-Filters-in-Python/"
+      - "https://github.com/rlabbe/Kalman-and-Bayesian-Filters-in-Python"
+    license: CC-BY-4.0 (book), MIT (code)
+
+  markov-chain:
+    status: "reference"
+    entry_point: markov-chain/index.md
+    quick_reference: markov-chain/quick-reference.md
+    description: "Discrete-state Markov chain theory. Underpins our phenology transition prior."
+    concepts:
+      - markov-chain/concepts/markov-chain-basics.md
+      - markov-chain/concepts/transition-matrix.md
+      - markov-chain/concepts/stationary-distribution.md
+    patterns:
+      - markov-chain/patterns/pgmpy-markovchain.md
+      - markov-chain/patterns/numpy-transition-matrix.md
+    external:
+      - "https://github.com/pgmpy/pgmpy"
+      - "https://pgmpy.org/models/markovchain.html"
+      - "https://www.math.ku.dk/bibliotek/arkivet/noter/stoknoter.pdf"
+    license: MIT (pgmpy)
+
 # Cross-domain shared resources (none yet, reserved for future)
 shared: {}
 
 # MCP validation tracking (populate as domains are validated against external docs)
-validation: {}
+validation:
+  pyro:
+    last_checked: "2026-04-17"
+    source: "WebFetch of pyro.ai landing + numpyro github README"
+  kalman-bayesian:
+    last_checked: "2026-04-17"
+    source: "WebFetch of Labbe book online HTML version"
+  markov-chain:
+    last_checked: "2026-04-17"
+    source: "WebFetch of pgmpy.org MarkovChain docs + github README"

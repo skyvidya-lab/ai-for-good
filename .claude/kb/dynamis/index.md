@@ -19,6 +19,12 @@ Physics-informed modules for chaos inference on dynamic systems.
 
 - [quick-reference.md](quick-reference.md)
 
+## Related KB Domains (external theory)
+
+- [../kalman-bayesian/](../kalman-bayesian/index.md) — Foundational KF theory (Labbe book). The math underneath our MKM.
+- [../markov-chain/](../markov-chain/index.md) — Discrete Markov chain theory. Underpins the phenology transition prior.
+- [../pyro/](../pyro/index.md) — Probabilistic programming (Pyro / NumPyro). Candidate for v5+ Bayesian MKM.
+
 ## Core Philosophy
 
 > "LLMs are Cerebrums (semantic); Dynamis is the Cerebellum (physics/motor)."
