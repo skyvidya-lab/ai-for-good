@@ -13,6 +13,7 @@ Physics-informed modules for chaos inference on dynamic systems.
 
 - [phenology-transition-prior.md](patterns/phenology-transition-prior.md) — 7×7 matrix for MKM initialisation
 - [agriculture-domain-mapping.md](patterns/agriculture-domain-mapping.md) — Finance → Agriculture concept map
+- [physics-vector-injection.md](patterns/physics-vector-injection.md) — **v3 fix**: expose MKM/innovation/P signals as explicit features to the crop head
 
 ## Quick Reference
 

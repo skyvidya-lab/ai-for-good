@@ -50,3 +50,20 @@ out = model(x, mask=mask, hurst=hurst)
 trace_P = out["uncertainty"]              # (B,)
 is_background = trace_P > trace_P.quantile(0.90)  # top 10% most uncertain
 ```
+
+## DynamisCropClassifier output dict (v3)
+
+```python
+out = model(x, mask=mask, hurst=hurst)
+out["crop_logits"]       # (B, 3)
+out["pheno_logits"]      # (B, T, 7)
+out["innovations"]       # (B, T, 7) — Kalman surprise at each step
+out["P_trajectory"]      # (B, T, 7) — P diagonals over time
+out["uncertainty"]       # (B,) — trace(P_final)
+out["final_state"]       # (B, 7)
+out["state_trajectory"]  # (B, T, 7)
+out["physics_vector"]    # (B, 8 + state_dim) — inputs to crop head MLP
+```
+
+The `physics_vector` is the key v3 change — it's what makes Dynamis discriminative.
+See [patterns/physics-vector-injection.md](patterns/physics-vector-injection.md).

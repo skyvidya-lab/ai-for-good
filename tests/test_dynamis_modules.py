@@ -123,6 +123,58 @@ def test_dynamis_crop_classifier_forward():
     assert out["uncertainty"].shape == (B,)
 
 
+def test_dynamis_exposes_physics_vector_to_crop_head():
+    """The crop head must receive the Dynamis physics signals as explicit
+    features (innovation stats + final state + trace(P) stats + hurst).
+    Without this, Dynamis loses the discriminative edge it computes
+    internally — see the v2 report where this was the root cause of the
+    -7pp gap to LightGBM."""
+    from src.models import DynamisCropClassifier, DynamisModelConfig
+
+    cfg = DynamisModelConfig(input_dim=17, state_dim=7, hidden_dim=32)
+    model = DynamisCropClassifier(cfg)
+    B, T = 3, 5
+    x = torch.randn(B, T, 17)
+    mask = torch.ones(B, T, dtype=torch.bool)
+    out = model(x, mask=mask)
+
+    assert "physics_vector" in out, "physics_vector must be exposed"
+    # 8 scalar stats + state_dim=7 → 15 features
+    assert out["physics_vector"].shape == (B, 8 + 7)
+    assert "P_trajectory" in out
+    assert out["P_trajectory"].shape == (B, T, 7)
+
+
+def test_dynamis_crop_head_gradient_flows_through_physics():
+    """A change in the innovation signal must change the crop logits,
+    proving the physics vector is actually wired into the head."""
+    import torch.nn.functional as F
+
+    from src.models import DynamisCropClassifier, DynamisModelConfig
+
+    torch.manual_seed(0)
+    cfg = DynamisModelConfig(input_dim=17, state_dim=7, hidden_dim=32)
+    model = DynamisCropClassifier(cfg).eval()
+    B, T = 2, 4
+    x1 = torch.randn(B, T, 17)
+    x2 = x1.clone()
+    x2[:, :, 12] += 5.0  # perturb the NDVI channel — should produce different innovations
+
+    with torch.no_grad():
+        out1 = model(x1)
+        out2 = model(x2)
+    # Physics vectors must differ (otherwise the physics injection is a stub)
+    assert not torch.allclose(out1["physics_vector"], out2["physics_vector"]), (
+        "physics_vector did not change under a meaningful input perturbation"
+    )
+    # And the crop logits must reflect the change
+    assert not torch.allclose(
+        F.softmax(out1["crop_logits"], -1),
+        F.softmax(out2["crop_logits"], -1),
+        atol=1e-3,
+    ), "crop logits did not change — physics vector is not reaching the head"
+
+
 def test_mkm_init_spread_produces_heterogeneous_Q_R():
     """Post-run optimisation §4: the default MKM init should give per-dim
     heterogeneity in log_Q_diag / log_R_diag so the Kalman filter does not
