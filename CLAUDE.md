@@ -55,11 +55,18 @@ Full details in [.claude/kb/challenge/dataset-anatomy.md](.claude/kb/challenge/d
 ```
 ai-for-good/
 ├── CLAUDE.md                   # This file (root brain)
-├── .claude/                    # Orchestration (agents, commands, KB)
+├── .claude/                    # Orchestration (agents, commands, KB, SDD)
 │   ├── CLAUDE.md               # Detailed orchestration doc
 │   ├── agents/                 # SubAgents (ai-ml/, code-quality/, domain/, exploration/)
-│   ├── commands/               # Custom slash commands (core/, train/, submit/)
-│   └── kb/                     # Knowledge base (dynamis/, sentinel2/, crop-science/, challenge/)
+│   ├── commands/               # Custom slash commands (core/, train/, submit/, workflow/)
+│   ├── kb/                     # Knowledge base with _index.yaml registry
+│   ├── sdd/                    # Spec-Driven Development (5-phase workflow)
+│   │   ├── architecture/       # WORKFLOW_CONTRACTS.yaml + ARCHITECTURE.md
+│   │   ├── templates/          # BRAINSTORM / DEFINE / DESIGN / BUILD_REPORT / SHIPPED
+│   │   ├── features/           # Active features (BRAINSTORM_*.md, DEFINE_*.md, DESIGN_*.md)
+│   │   ├── reports/            # BUILD_REPORT_*.md
+│   │   └── archive/            # SHIPPED features, one folder per feature
+│   └── storage/                # Session memory archive (memory-YYYY-MM-DD.md)
 ├── src/
 │   ├── dynamis/                # Physics-informed modules
 │   ├── data/                   # Sentinel-2 pipeline (loader, consolidator, extractor, indices, builder)
@@ -123,3 +130,24 @@ pytest tests/                 # smoke tests against test_input_sample/
 ## Action Plan
 
 Approved plan at `C:\Users\eluzq\.claude\plans\nifty-snuggling-hare.md`. Timeline: 24 days with explicit buffer before the 2026-05-10 submission deadline.
+
+## SDD Workflow (5 phases)
+
+Adopted from AgentSpec v3.0.0 (2026-04-17). Every Dynamis iteration (v3, v4, ...) flows through:
+
+```
+/brainstorm → /define → /design → /build → /ship      (+ /iterate cross-phase)
+```
+
+Outputs live in `.claude/sdd/features/` (in-flight) and `.claude/sdd/archive/{FEATURE}/` (shipped).
+
+| Command | Phase | Output |
+|---|---|---|
+| `/brainstorm` | 0 | `BRAINSTORM_{FEATURE}.md` — explore approaches, YAGNI |
+| `/define` | 1 | `DEFINE_{FEATURE}.md` — requirements + clarity score ≥12/15 |
+| `/design` | 2 | `DESIGN_{FEATURE}.md` — architecture + file manifest |
+| `/build` | 3 | Code + `BUILD_REPORT_{FEATURE}.md` |
+| `/ship` | 4 | `SHIPPED_{DATE}.md` + lessons learned |
+| `/iterate` | cross | Update any phase doc with cascade detection |
+
+Rules of the road: see `.claude/sdd/architecture/WORKFLOW_CONTRACTS.yaml`.

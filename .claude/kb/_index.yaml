@@ -1,0 +1,103 @@
+# Dynamis Terra — Knowledge Base Index
+# Machine-readable registry for KB domains (pattern from AgentSpec v3.0.0)
+
+version: "1.0.0"
+project: "Dynamis Terra"
+challenge: "ITU AI and Space Computing Challenge 2026 — Track 1 Final Round"
+last_updated: "2026-04-17"
+
+# File size limits (single source of truth)
+limits:
+  quick_reference: 100
+  concept: 150
+  pattern: 200
+  spec: null
+  reference: null
+
+# Templates available for new KB content
+templates:
+  - name: concept
+    path: _templates/concept.md.template
+  - name: pattern
+    path: _templates/pattern.md.template
+  - name: index
+    path: _templates/index.md.template
+  - name: quick-reference
+    path: _templates/quick-reference.md.template
+  - name: spec
+    path: _templates/spec.yaml.template
+  - name: domain-manifest
+    path: _templates/domain-manifest.yaml.template
+  - name: test-case
+    path: _templates/test-case.json.template
+
+# Domain registry — 4 domains tailored to this challenge
+domains:
+  dynamis:
+    status: "active"
+    entry_point: dynamis/index.md
+    quick_reference: dynamis/quick-reference.md
+    description: "Physics-informed modules: MKM, Hurst, Innovation Loss, ChaosAttention."
+    concepts: []  # (fill as added)
+    patterns:
+      - dynamis/patterns/phenology-transition-prior.md
+      - dynamis/patterns/agriculture-domain-mapping.md
+      - dynamis/patterns/physics-vector-injection.md
+    source_code:
+      - src/dynamis/dynamis_core.py
+      - src/dynamis/phenology_prior.py
+      - src/dynamis/hurst_geo.py
+      - src/dynamis/chaos_attention.py
+      - src/dynamis/innovation_loss.py
+      - src/models/dynamis_crop_classifier.py
+    agents:
+      - ai-ml/dynamis-geo-architect
+
+  sentinel2:
+    status: "active"
+    entry_point: sentinel2/index.md
+    description: "Sentinel-2 L2A bands, vegetation indices, pipeline conventions."
+    concepts:
+      - sentinel2/concepts/bands.md
+      - sentinel2/concepts/vegetation-indices.md
+    patterns: []
+    source_code:
+      - src/data/sentinel2_loader.py
+      - src/data/folder_consolidator.py
+      - src/data/point_extractor.py
+      - src/data/vegetation_indices.py
+      - src/data/temporal_builder.py
+      - src/data/sample_strategy.py
+      - src/data/phenology_features.py
+    agents:
+      - ai-ml/satellite-data-engineer
+
+  crop-science:
+    status: "active"
+    entry_point: crop-science/index.md
+    description: "Agronomic knowledge: phenophases, crop signatures (rice/corn/soybean NE China)."
+    concepts:
+      - crop-science/concepts/phenophases.md
+      - crop-science/concepts/crop-signatures.md
+    patterns: []
+    agents:
+      - domain/crop-classifier
+
+  challenge:
+    status: "active"
+    entry_point: challenge/index.md
+    description: "Challenge task description, dataset anatomy, submission format."
+    concepts: []
+    patterns: []
+    docs:
+      - challenge/task-description.md
+      - challenge/dataset-anatomy.md
+      - challenge/submission-format.md
+    agents:
+      - domain/submission-builder
+
+# Cross-domain shared resources (none yet, reserved for future)
+shared: {}
+
+# MCP validation tracking (populate as domains are validated against external docs)
+validation: {}
