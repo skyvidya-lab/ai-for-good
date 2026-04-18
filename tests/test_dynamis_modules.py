@@ -228,3 +228,80 @@ def test_hurst_returns_raw_without_clipping():
 def test_hurst_returns_nan_on_too_short_series_when_raw():
     H_raw = calculate_hurst(np.array([1.0, 2.0, 3.0]), return_raw=True)
     assert np.isnan(H_raw) or abs(H_raw - 0.5) > 1e-6  # either NaN (preferred) or not the degenerate 0.5
+
+
+# =============================================================================
+# v4 additions — non-saturating Hurst (DFA) and temperature scaling
+# =============================================================================
+
+def test_hurst_dfa_does_not_saturate_on_monotonic_series():
+    """v3 had ~66% saturation at H=1.00 because the classical R/S log-log slope
+    blows up on near-monotonic NDVI curves. DFA should yield a value strictly
+    below 1.0 on the same input."""
+    from src.dynamis import hurst_dfa
+
+    # Strongly monotonic series (linear + tiny noise) — the pathological case
+    rng = np.random.default_rng(0)
+    series = np.linspace(0.0, 1.0, 30) + 0.01 * rng.standard_normal(30)
+    h = hurst_dfa(series)
+    assert not np.isnan(h)
+    assert 0.0 <= h <= 1.0
+    assert h < 0.99, f"DFA saturated at {h} on a monotonic series (should stay below 1.0)"
+
+
+def test_hurst_dfa_finite_on_random_walk():
+    """Sanity check — DFA on a random walk should give ~0.5."""
+    from src.dynamis import hurst_dfa
+
+    rng = np.random.default_rng(1)
+    walk = np.cumsum(rng.standard_normal(500))
+    h = hurst_dfa(walk)
+    assert not np.isnan(h)
+    assert 0.3 < h < 0.8  # generous bound; DFA has variance on finite samples
+
+
+def test_temperature_scale_reduces_ece_on_overconfident_logits():
+    """Construct synthetic over-confident logits (scaled up) and verify that
+    temperature scaling learns T > 1 and reduces ECE."""
+    from src.training import (
+        apply_temperature,
+        expected_calibration_error_np,
+        temperature_scale,
+    )
+
+    rng = np.random.default_rng(42)
+    n, c = 200, 3
+    labels = rng.integers(0, c, size=n)
+    # Base "well calibrated" logits
+    base_logits = rng.standard_normal((n, c))
+    # Bias toward the correct class but amplify to make it over-confident
+    for i, y in enumerate(labels):
+        base_logits[i, y] += 1.5
+    overconfident = base_logits * 5.0  # × 5 inflates confidence pathologically
+
+    probs_pre = np.exp(overconfident) / np.exp(overconfident).sum(-1, keepdims=True)
+    ece_pre = expected_calibration_error_np(probs_pre, labels)
+
+    T = temperature_scale(overconfident, labels, steps=300, lr=1e-2)
+    assert T > 1.0, f"Expected T>1 on over-confident logits, got {T}"
+
+    probs_post = apply_temperature(overconfident, T)
+    ece_post = expected_calibration_error_np(probs_post, labels)
+    assert ece_post < ece_pre, f"Temperature scaling did not reduce ECE: {ece_pre:.3f} → {ece_post:.3f}"
+
+
+def test_temperature_scale_preserves_argmax():
+    """Temperature scaling must not change which class has the highest probability."""
+    from src.training import apply_temperature, temperature_scale
+
+    rng = np.random.default_rng(7)
+    logits = rng.standard_normal((50, 3)) * 2.0
+    labels = rng.integers(0, 3, size=50)
+
+    T = temperature_scale(logits, labels)
+    probs_pre = np.exp(logits) / np.exp(logits).sum(-1, keepdims=True)
+    probs_post = apply_temperature(logits, T)
+
+    assert np.array_equal(probs_pre.argmax(-1), probs_post.argmax(-1)), (
+        "Temperature scaling changed argmax — must be mathematically impossible"
+    )

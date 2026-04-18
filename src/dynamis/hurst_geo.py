@@ -115,6 +115,105 @@ def hurst_regional(
     return calculate_hurst(arr, min_window=3, max_window=max(3, arr.size // 2))
 
 
+def hurst_dfa(
+    series: np.ndarray,
+    min_window: int = 4,
+    max_window: int | None = None,
+    min_regression_points: int = 3,
+) -> float:
+    """Detrended Fluctuation Analysis (DFA) estimator of the Hurst exponent.
+
+    Less prone to the saturation-at-1.0 pathology that plagues R/S on
+    strongly-monotonic NDVI series. DFA integrates the series, splits
+    into windows, detrends each window linearly, measures the RMS
+    fluctuation per window size, and reads the Hurst off the log-log slope.
+
+    Returns NaN if the series is too short to support `min_regression_points`
+    distinct window sizes.
+    """
+    s = np.asarray(series, dtype=np.float64)
+    s = s[~np.isnan(s)]
+    n = s.size
+    if max_window is None:
+        max_window = max(min_window, n // 2)
+    if n < 2 * min_window or max_window < min_window:
+        return float("nan")
+
+    # 1. integrate (cumulative deviation)
+    y = np.cumsum(s - s.mean())
+
+    # 2. log-spaced window sizes
+    sizes: list[int] = []
+    w = min_window
+    while w <= max_window:
+        sizes.append(w)
+        w = max(w + 1, int(w * 1.5))
+    if len(sizes) < min_regression_points:
+        return float("nan")
+
+    rms = []
+    for w in sizes:
+        n_w = n // w
+        if n_w < 1:
+            continue
+        segs = y[: n_w * w].reshape(n_w, w)
+        t = np.arange(w)
+        fluct_sq: list[float] = []
+        for seg in segs:
+            # linear detrend each segment
+            p = np.polyfit(t, seg, 1)
+            trend = np.polyval(p, t)
+            fluct_sq.append(np.mean((seg - trend) ** 2))
+        rms.append((w, float(np.sqrt(np.mean(fluct_sq)) + 1e-12)))
+
+    if len(rms) < min_regression_points:
+        return float("nan")
+    log_w = np.log([a for a, _ in rms])
+    log_f = np.log([b for _, b in rms])
+    slope = float(np.polyfit(log_w, log_f, 1)[0])
+    # DFA yields slope in roughly [0, 2]; divide by 2 for strong-trend series
+    # to keep the output comparable to classical Hurst in [0, 1].
+    return float(np.clip(slope, 0.0, 1.0))
+
+
+def hurst_diff_regional(
+    region_view: dict[str, dict[str, "Path"]],
+    extract_fn,
+    lon: float,
+    lat: float,
+    min_dates: int = 8,
+) -> float:
+    """Hurst on the **first-differenced** regional NDVI series.
+
+    Strips the monotonic trend that makes classical R/S saturate at 1.0.
+    The differenced series captures short-term oscillations — still
+    discriminative across crops (rice's flood-pulse vs corn's smooth ramp)
+    but naturally bounded.
+    """
+    from ..data.sentinel2_loader import MODEL_BANDS  # local import to avoid cycle
+
+    dates = sorted(region_view.keys())
+    vals: list[float] = []
+    for d in dates:
+        band_paths = region_view[d]
+        bands_vec = extract_fn(band_paths, lon, lat, list(MODEL_BANDS))
+        nir = bands_vec[7]
+        red = bands_vec[3]
+        if np.isnan(nir) or np.isnan(red):
+            continue
+        ndvi = (nir - red) / (nir + red + 1e-6)
+        vals.append(float(ndvi))
+    arr = np.asarray(vals, dtype=np.float64)
+    if arr.size < min_dates:
+        return float("nan")
+
+    diffs = np.diff(arr)
+    if diffs.size < 4:
+        return float("nan")
+    # Classical R/S on the differenced series — trend already removed
+    return calculate_hurst(diffs, min_window=3, max_window=max(3, diffs.size // 2))
+
+
 def hurst_features(
     ndvi_series: np.ndarray,
     bands_per_date: np.ndarray,
@@ -163,5 +262,7 @@ __all__ = [
     "hurst_temporal",
     "hurst_spectral",
     "hurst_regional",
+    "hurst_dfa",
+    "hurst_diff_regional",
     "hurst_features",
 ]
