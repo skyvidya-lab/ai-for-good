@@ -2,6 +2,15 @@
 
 Physics-informed modules for chaos inference on dynamic systems.
 
+## Core reference — the parent theory
+
+Our `HRM_MKM` architecture extends the **Hierarchical Reasoning Model** (HRM) of:
+
+> Wang, G., Li, J., Sun, Y., Chen, X., Liu, C., Wu, Y., Lu, M., Song, S., & Abbasi Yadkori, Y. (2025). *Hierarchical Reasoning Model*. arXiv:2506.21734. <https://arxiv.org/abs/2506.21734>
+> Local copy: `C:\Users\eluzq\workspace\00_benchmarking\skyvidya_core\skyvidya_dynamis\dynamis-teoria\2506.21734v1.pdf`
+
+The HRM paper introduces the two-module recurrent architecture (slow abstract planner + fast tactical computer) that we extend with an explicit Markov-Kalman Module for uncertainty-aware latent state tracking.
+
 ## Concepts
 
 - [markov-kalman-module.md](concepts/markov-kalman-module.md) — Differentiable Kalman Filter (A, H, Q, R learnable)

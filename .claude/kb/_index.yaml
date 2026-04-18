@@ -41,7 +41,11 @@ domains:
     entry_point: dynamis/index.md
     quick_reference: dynamis/quick-reference.md
     description: "Physics-informed modules: MKM, Hurst, Innovation Loss, ChaosAttention."
-    concepts: []  # (fill as added)
+    concepts:
+      - dynamis/concepts/markov-kalman-module.md
+      - dynamis/concepts/hurst-exponent.md
+      - dynamis/concepts/innovation-loss.md
+      - dynamis/concepts/chaos-attention.md
     patterns:
       - dynamis/patterns/phenology-transition-prior.md
       - dynamis/patterns/agriculture-domain-mapping.md
@@ -55,6 +59,10 @@ domains:
       - src/models/dynamis_crop_classifier.py
     agents:
       - ai-ml/dynamis-geo-architect
+    parent_theory:
+      citation: "Wang et al. 2025 — Hierarchical Reasoning Model"
+      arxiv: "https://arxiv.org/abs/2506.21734"
+      local_copy: "background/../skyvidya_dynamis/dynamis-teoria/2506.21734v1.pdf"
 
   sentinel2:
     status: "active"
