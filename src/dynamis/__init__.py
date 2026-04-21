@@ -10,6 +10,7 @@ from .dynamis_core import (
     is_predictable_regime,
 )
 from .hurst_geo import (
+    hurst_bounded,
     hurst_dfa,
     hurst_diff_regional,
     hurst_features,
@@ -17,6 +18,7 @@ from .hurst_geo import (
     hurst_spectral,
     hurst_temporal,
 )
+from .ood import OODModel, combined_ood_score, fit_combined_ood, softmax_entropy
 from .innovation_loss import dynamis_loss, expected_calibration_error, innovation_loss
 from .phenology_prior import (
     N_PHENOPHASES,
@@ -41,9 +43,15 @@ __all__ = [
     "hurst_temporal",
     "hurst_spectral",
     "hurst_regional",
+    "hurst_bounded",
     "hurst_dfa",
     "hurst_diff_regional",
     "hurst_features",
+    # ood
+    "OODModel",
+    "softmax_entropy",
+    "fit_combined_ood",
+    "combined_ood_score",
     # physics
     "ChaosAttention",
     # loss

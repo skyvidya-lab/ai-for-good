@@ -305,3 +305,101 @@ def test_temperature_scale_preserves_argmax():
     assert np.array_equal(probs_pre.argmax(-1), probs_post.argmax(-1)), (
         "Temperature scaling changed argmax — must be mathematically impossible"
     )
+
+
+# =============================================================================
+# v5 additions — bounded Hurst + combined OOD scoring
+# =============================================================================
+
+def test_hurst_bounded_never_saturates_at_one():
+    """v4 had ~36% of points at H >= 0.98 on the full dataset. Bounded Hurst
+    must map extreme trends to < 0.98 via the tanh squash."""
+    from src.dynamis import hurst_bounded
+
+    rng = np.random.default_rng(0)
+    # Pathological case: strictly monotonic ramp
+    series = np.linspace(0.0, 1.0, 50) + 0.001 * rng.standard_normal(50)
+    h = hurst_bounded(series)
+    assert not np.isnan(h)
+    assert h < 0.98, f"hurst_bounded saturated at {h} on a monotonic ramp"
+    assert h > 0.5, f"hurst_bounded should lean trending (>0.5), got {h}"
+
+
+def test_hurst_bounded_near_half_on_random_walk():
+    """Sanity check — tanh squash is centred at H=0.5 for random walks."""
+    from src.dynamis import hurst_bounded
+
+    rng = np.random.default_rng(1)
+    walk = np.cumsum(rng.standard_normal(400))
+    h = hurst_bounded(walk)
+    assert 0.3 < h < 0.75, f"Expected H ~= 0.5 on random walk, got {h}"
+
+
+def test_softmax_entropy_zero_on_one_hot():
+    """Entropy of a one-hot distribution is 0."""
+    from src.dynamis import softmax_entropy
+
+    probs = np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    e = softmax_entropy(probs)
+    assert np.allclose(e, 0.0, atol=1e-6), f"Entropy of one-hot must be 0, got {e}"
+
+
+def test_softmax_entropy_maximal_on_uniform():
+    """Max entropy for C classes is log(C)."""
+    from src.dynamis import softmax_entropy
+
+    probs = np.full((5, 3), 1 / 3)
+    e = softmax_entropy(probs)
+    expected = np.log(3)
+    assert np.allclose(e, expected, atol=1e-4), f"Expected log(3)={expected}, got {e}"
+
+
+def test_combined_ood_falls_back_when_too_few_errors():
+    """With <5 errors in validation, fit_combined_ood must return None and
+    combined_ood_score should fall back to normalised trace_P."""
+    from src.dynamis import combined_ood_score
+
+    rng = np.random.default_rng(2)
+    n = 50
+    trace_P = rng.uniform(0.9, 1.3, size=n)
+    probs = rng.dirichlet([3, 3, 3], size=n)
+    innov_max = rng.uniform(0.0, 0.5, size=n)
+    # Only 2 errors — below min_errors threshold
+    errors = np.zeros(n); errors[[3, 15]] = 1
+
+    scores, model = combined_ood_score(
+        trace_P=trace_P, probs=probs, innov_max=innov_max, errors=errors,
+    )
+    assert model is None
+    assert scores.shape == (n,)
+    # Fallback = normalised trace_P, so min/max in [0, 1]
+    assert 0.0 <= scores.min() and scores.max() <= 1.0
+
+
+def test_combined_ood_recovers_signal_when_features_are_predictive():
+    """If we construct features that CORRELATE with errors, the logistic
+    regressor should assign high scores to errors."""
+    from src.dynamis import combined_ood_score
+
+    rng = np.random.default_rng(3)
+    n = 200
+    errors = np.zeros(n); errors[rng.choice(n, size=40, replace=False)] = 1
+
+    # Make trace_P systematically higher on errors
+    trace_P = rng.normal(1.0, 0.05, size=n)
+    trace_P[errors == 1] += 0.3
+    # Uniform probs — entropy carries no additional signal
+    probs = rng.dirichlet([5, 5, 5], size=n)
+    innov_max = rng.uniform(0.0, 0.5, size=n)
+    innov_max[errors == 1] += 0.2
+
+    scores, model = combined_ood_score(
+        trace_P=trace_P, probs=probs, innov_max=innov_max, errors=errors,
+    )
+    assert model is not None, "With 40 errors we should fit the LR"
+    mean_err_score = scores[errors == 1].mean()
+    mean_ok_score = scores[errors == 0].mean()
+    assert mean_err_score > mean_ok_score, (
+        f"OOD score should be higher on errors: errors={mean_err_score:.3f} "
+        f"vs correct={mean_ok_score:.3f}"
+    )

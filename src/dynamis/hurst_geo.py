@@ -115,6 +115,41 @@ def hurst_regional(
     return calculate_hurst(arr, min_window=3, max_window=max(3, arr.size // 2))
 
 
+def hurst_bounded(
+    series: np.ndarray,
+    min_window: int = 4,
+    max_window: int | None = None,
+) -> float:
+    """Hurst estimator that **cannot saturate** at 0 or 1.
+
+    Computes the raw log-log slope via R/S analysis, then squashes it
+    through a smooth tanh-based transformation:
+
+        H = 0.5 + 0.5 · tanh(2 · (raw_H - 0.5))
+
+    - Preserves the H = 0.5 intercept for true random walks.
+    - Extreme trends (raw slope ≥ 1.0) map to ~0.95-0.98, never exactly 1.0.
+    - Mean-reverting extremes (raw slope ≤ 0.0) map to ~0.02-0.05, never 0.
+    - Monotonic + differentiable — good as a neural-net input.
+
+    Meant to be the **first** level of the cascade in v5, replacing the
+    diagnostic R/S + clip combination that produced 36% saturation in v4.
+    """
+    s = np.asarray(series, dtype=np.float64)
+    s = s[~np.isnan(s)]
+    n = s.size
+    if n < 2 * min_window:
+        return float("nan")
+    if max_window is None:
+        max_window = max(min_window, n // 2)
+    raw = calculate_hurst(s, min_window=min_window, max_window=max_window, return_raw=True)
+    if np.isnan(raw):
+        return float("nan")
+    # Tanh squash — centred at 0.5 for random walk invariance
+    squashed = 0.5 + 0.5 * np.tanh(2.0 * (raw - 0.5))
+    return float(squashed)
+
+
 def hurst_dfa(
     series: np.ndarray,
     min_window: int = 4,
@@ -262,6 +297,7 @@ __all__ = [
     "hurst_temporal",
     "hurst_spectral",
     "hurst_regional",
+    "hurst_bounded",
     "hurst_dfa",
     "hurst_diff_regional",
     "hurst_features",
