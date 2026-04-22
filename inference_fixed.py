@@ -23,7 +23,7 @@ from src.data.temporal_builder import point_region_from_coords
 from src.dynamis import hurst_regional, hurst_features, PHENOPHASES
 from src.models import DynamisCropClassifier, DynamisModelConfig
 
-MODEL_PATH = '/workspace/models/dynamis_terra_v0.pt'
+MODEL_PATH = '/workspace/models/dynamis_terra_v6.pt'
 
 
 def _parse_date(d: str):
