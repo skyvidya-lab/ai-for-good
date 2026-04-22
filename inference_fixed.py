@@ -82,9 +82,9 @@ def main(data_dir='/input', result_dir='/output'):
     print(f'{len(bbox_index)} regions indexed')
 
     # ---------------------------------------------------------------
-    # Step 1: Build ONE PointSeries per unique point_id (heavy work)
+    # Step 1: Build ONE PointSeries per unique location (heavy work)
     # ---------------------------------------------------------------
-    print('\n=== Building point series (one per unique point_id) ===')
+    print('\n=== Building PointSeries cache by location ===')
     pid_to_series = {}   # {point_id: PointSeries}
     pid_to_region = {}   # {point_id: str}
     fallback_pids = set()
@@ -115,7 +115,7 @@ def main(data_dir='/input', result_dir='/output'):
         pid_to_region[int(pid)] = region
 
     valid_pids = sorted(pid_to_series.keys())
-    print(f'{len(valid_pids)} valid | {len(fallback_pids)} fallback')
+    print(f'{len(valid_pids)} unique locations with data | {len(fallback_pids)} fallback')
 
     # ---------------------------------------------------------------
     # Step 2: Load model
@@ -236,6 +236,10 @@ def main(data_dir='/input', result_dir='/output'):
                 valid_t = np.where(ps.mask)[0]
                 t_idx = int(valid_t[-1]) if len(valid_t) > 0 else 0
 
+            # Safety clamp: t_idx must be within the padded T_max window
+            T_max_actual = pheno_logits_np.shape[1]
+            t_idx = min(t_idx, T_max_actual - 1)
+
             pheno_pred = PHENOPHASES[int(pheno_logits_np[idx, t_idx, :].argmax())]
         else:
             # Fallback for points without region match
@@ -252,19 +256,26 @@ def main(data_dir='/input', result_dir='/output'):
         })
 
     # ---------------------------------------------------------------
-    # Step 5: Write output
+    # Step 5: Validate row count then write output
     # ---------------------------------------------------------------
+    total_expected = len(points_df)
+    if len(results) != total_expected:
+        print(f'[WARN] Expected {total_expected} rows but got {len(results)} — check fallback logic!')
+    else:
+        print(f'[OK] All {total_expected} rows accounted for.')
+
     os.makedirs(result_dir, exist_ok=True)
+
+    # Primary output: CSV (platform requirement)
+    csv_path = os.path.join(result_dir, 'result.csv')
+    pd.DataFrame(results).to_csv(csv_path, index=False)
+    print(f'\n=== Done: {len(results)} predictions → {csv_path} ===')
+
+    # Secondary output: JSON (backup / compatibility)
     out_path = os.path.join(result_dir, 'result.json')
     with open(out_path, 'w') as f:
         json.dump(results, f, indent=2)
-
-    print(f'\n=== Done: {len(results)} predictions → {out_path} ===')
-
-    # Also write CSV version for safety (in case platform prefers CSV)
-    csv_path = os.path.join(result_dir, 'result.csv')
-    pd.DataFrame(results).to_csv(csv_path, index=False)
-    print(f'=== Also saved CSV: {csv_path} ===')
+    print(f'=== Also saved JSON: {out_path} ===')
 
     # Summary stats
     from collections import Counter
