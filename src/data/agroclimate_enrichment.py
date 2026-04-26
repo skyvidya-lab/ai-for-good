@@ -3,101 +3,108 @@ import pandas as pd
 import numpy as np
 import time
 import os
+import pickle
 from pathlib import Path
 from tqdm import tqdm
 
 class AgroclimateExtractor:
     """
-    Enriches crop data with agroclimate variables from GEE (SACI inspired).
-    Focus: ERA5-Land (Soil Moisture, Precip, Temp) and SMAP (Surface Wetness).
+    Optimized Extractor for SACI agroclimate variables.
+    Uses FeatureCollections to process points in batches.
     """
     
     def __init__(self, project='agente-bdr-sdr'):
         try:
-            # Try initializing with the project from SACI
             ee.Initialize(project=project)
             print(f"GEE initialized with project: {project}")
         except Exception as e:
             print(f"Standard initialization failed: {e}")
             try:
-                # Check if running in Google Colab to trigger interactive auth
                 import google.colab
                 print("Google Colab detected. Triggering ee.Authenticate()...")
                 ee.Authenticate()
                 ee.Initialize(project=project)
-                print(f"GEE initialized after authentication with project: {project}")
-            except ImportError:
+            except (ImportError, Exception):
                 try:
-                    # Fallback for generic environment
                     ee.Initialize()
                     print("GEE initialized with default project.")
                 except Exception:
-                    print("GEE not initialized. Please run 'earthengine authenticate' locally.")
-            except Exception as e2:
-                print(f"Authentication/Initialization failed: {e2}")
+                    print("GEE not initialized. Authentication required.")
 
-    def get_time_series(self, lat, lon, start_date='2018-04-01', end_date='2018-11-01'):
+    def get_batch_time_series(self, points_list, start_date='2018-04-01', end_date='2018-11-01'):
         """
-        Extracts multi-source time series for a specific point.
+        Extracts data for a list of points [(id, lat, lon), ...] using a single GEE request per source.
         """
-        point = ee.Geometry.Point([lon, lat])
-        
-        # 1. ERA5-Land Daily (9km)
+        features = [
+            ee.Feature(ee.Geometry.Point([lon, lat]), {'point_id': str(pid)})
+            for pid, lat, lon in points_list
+        ]
+        fc = ee.FeatureCollection(features)
+
+        # 1. ERA5-Land
         era5 = ee.ImageCollection("ECMWF/ERA5_LAND/DAILY_AGGR") \
             .filterDate(start_date, end_date) \
-            .filterBounds(point) \
             .select([
                 'volumetric_soil_water_layer_1',
-                'volumetric_soil_water_layer_2',
                 'total_precipitation_sum',
                 'temperature_2m'
             ])
-            
-        # 2. SMAP L4 (Surface Wetness - 9km)
+
+        # 2. SMAP
         smap = ee.ImageCollection("NASA/SMAP/SPL4SMGP/008") \
             .filterDate(start_date, end_date) \
-            .filterBounds(point) \
             .select(['sm_surface_wetness'])
 
-        def _extract_collection(img_col, bands):
-            def _get_val(img):
-                res = img.reduceRegion(ee.Reducer.mean(), point, 500)
-                return ee.Feature(None, {
-                    'millis': img.date().millis(),
-                    **{b: res.get(b) for b in bands}
-                })
+        def process_collection(img_col, name_prefix):
+            def reduce_img(img):
+                return img.reduceRegions(
+                    collection=fc,
+                    reducer=ee.Reducer.mean(),
+                    scale=500
+                ).map(lambda f: f.set('millis', img.date().millis()))
             
-            features = img_col.map(_get_val).getInfo()
-            rows = [f['properties'] for f in features['features']]
-            df = pd.DataFrame(rows)
-            if not df.empty:
-                df['date'] = pd.to_datetime(df['millis'], unit='ms')
-            return df
+            # This returns a flattened FeatureCollection of all points x all dates
+            return img_col.map(reduce_img).flatten()
 
         try:
-            df_era5 = _extract_collection(era5, ['volumetric_soil_water_layer_1', 'volumetric_soil_water_layer_2', 'total_precipitation_sum', 'temperature_2m'])
-            df_smap = _extract_collection(smap, ['sm_surface_wetness'])
+            # Extract ERA5
+            res_era5 = process_collection(era5, 'era5').getInfo()
+            df_era5 = pd.DataFrame([f['properties'] for f in res_era5['features']])
             
-            if df_era5.empty or df_smap.empty:
-                return pd.DataFrame()
+            # Extract SMAP
+            res_smap = process_collection(smap, 'smap').getInfo()
+            df_smap = pd.DataFrame([f['properties'] for f in res_smap['features']])
 
-            # Merge on date (ignoring hours if any)
-            df_era5['date'] = df_era5['date'].dt.normalize()
-            df_smap['date'] = df_smap['date'].dt.normalize()
+            if df_era5.empty or df_smap.empty:
+                return {}
+
+            # Process and Merge
+            df_era5['date'] = pd.to_datetime(df_era5['millis'], unit='ms').dt.normalize()
+            df_smap['date'] = pd.to_datetime(df_smap['millis'], unit='ms').dt.normalize()
             
-            merged = pd.merge(df_era5, df_smap, on='date', how='outer').sort_values('date')
-            return merged
+            results = {}
+            for pid, _, _ in points_list:
+                p_era5 = df_era5[df_era5['point_id'] == str(pid)]
+                p_smap = df_smap[df_smap['point_id'] == str(pid)]
+                if not p_era5.empty and not p_smap.empty:
+                    merged = pd.merge(
+                        p_era5[['date', 'volumetric_soil_water_layer_1', 'total_precipitation_sum', 'temperature_2m']],
+                        p_smap[['date', 'sm_surface_wetness']],
+                        on='date', how='outer'
+                    ).sort_values('date')
+                    results[pid] = merged
+            
+            return results
+
         except Exception as e:
-            print(f"Error extracting GEE data for point ({lat}, {lon}): {e}")
-            return pd.DataFrame()
+            print(f"Batch extraction error: {e}")
+            return {}
 
     def align_to_ps(self, ps_dates, agro_df):
         """
         Aligns daily agro data to PointSeries dates.
-        ps_dates: list of strings 'YYYY-MM-DD' or datetime objects
         """
-        if agro_df.empty:
-            # Return zeros if no data found
+        if agro_df is None or (isinstance(agro_df, pd.DataFrame) and agro_df.empty):
             return pd.DataFrame([{
                 'precip_acc': 0.0, 'soil_moisture': 0.0, 
                 'temp': 20.0, 'smap_wetness': 0.5
@@ -109,55 +116,56 @@ class AgroclimateExtractor:
         results = []
         for d in ps_dates:
             target_dt = pd.to_datetime(d)
-            # Window: 5 days prior to observation
             mask = (agro_df['date'] <= target_dt) & (agro_df['date'] > target_dt - pd.Timedelta(days=5))
             window = agro_df[mask]
             
             if len(window) > 0:
                 results.append({
-                    'precip_acc': float(window['total_precipitation_sum'].sum() * 1000.0), # m to mm
+                    'precip_acc': float(window['total_precipitation_sum'].sum() * 1000.0),
                     'soil_moisture': float(window['volumetric_soil_water_layer_1'].mean()),
-                    'temp': float(window['temperature_2m'].mean() - 273.15), # K to C
+                    'temp': float(window['temperature_2m'].mean() - 273.15),
                     'smap_wetness': float(window['sm_surface_wetness'].mean())
                 })
             else:
-                # Fallback to nearest or average
-                results.append({
-                    'precip_acc': 0.0,
-                    'soil_moisture': 0.0,
-                    'temp': 20.0,
-                    'smap_wetness': 0.5
-                })
+                results.append({'precip_acc': 0.0, 'soil_moisture': 0.0, 'temp': 20.0, 'smap_wetness': 0.5})
         return pd.DataFrame(results)
 
-def batch_enrich(points_df, output_path, project='agente-bdr-sdr'):
+def batch_enrich(points_df, output_path, project='agente-bdr-sdr', batch_size=25):
     """
-    Runs extraction for a dataframe of points.
-    Expected columns: point_id, Latitude, Longitude
+    Efficiently enriches points using batching.
     """
     extractor = AgroclimateExtractor(project=project)
     unique_points = points_df.drop_duplicates('point_id')
+    pts = [(row['point_id'], row['Latitude'], row['Longitude']) for _, row in unique_points.iterrows()]
     
+    # Load existing if available (for resume)
     all_results = {}
-    print(f"Starting SACI enrichment for {len(unique_points)} unique points...")
-    
-    for _, row in tqdm(unique_points.iterrows(), total=len(unique_points)):
-        pid = row['point_id']
-        lat, lon = row['Latitude'], row['Longitude']
-        
-        df = extractor.get_time_series(lat, lon)
-        if not df.empty:
-            all_results[pid] = df
-            
-        # Small sleep to avoid GEE rate limits
-        time.sleep(0.1)
-        
-    # Save to a pickle for easy loading in notebooks
-    import pickle
-    with open(output_path, 'wb') as f:
-        pickle.dump(all_results, f)
-    print(f"Enrichment complete. Saved to {output_path}")
+    if os.path.exists(output_path):
+        try:
+            with open(output_path, 'rb') as f:
+                all_results = pickle.load(f)
+        except: pass
 
-if __name__ == "__main__":
-    # Test script with a known point if running locally
-    print("SACI Enrichment Module Ready.")
+    # Filter out already processed
+    to_process = [p for p in pts if p[0] not in all_results]
+    print(f"Total points: {len(pts)} | Already processed: {len(all_results)} | To process: {len(to_process)}")
+    
+    if not to_process:
+        print("All points already processed.")
+        return
+
+    # Process in batches
+    for i in range(0, len(to_process), batch_size):
+        batch = to_process[i : i + batch_size]
+        print(f"Processing batch {i//batch_size + 1}/{(len(to_process)-1)//batch_size + 1} ({len(batch)} points)...")
+        
+        batch_results = extractor.get_batch_time_series(batch)
+        all_results.update(batch_results)
+        
+        # Save after each batch
+        with open(output_path, 'wb') as f:
+            pickle.dump(all_results, f)
+        
+        time.sleep(1) # Be nice to GEE API
+        
+    print(f"Enrichment complete. Final size: {len(all_results)}. Saved to {output_path}")
