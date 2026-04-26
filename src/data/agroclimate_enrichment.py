@@ -130,7 +130,7 @@ class AgroclimateExtractor:
                 results.append({'precip_acc': 0.0, 'soil_moisture': 0.0, 'temp': 20.0, 'smap_wetness': 0.5})
         return pd.DataFrame(results)
 
-def batch_enrich(points_df, output_path, project='agente-bdr-sdr', batch_size=25):
+def batch_enrich(points_df, output_path, project='agente-bdr-sdr', batch_size=20):
     """
     Efficiently enriches points using batching.
     """
