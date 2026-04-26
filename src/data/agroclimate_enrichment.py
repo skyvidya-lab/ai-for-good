@@ -20,11 +20,21 @@ class AgroclimateExtractor:
         except Exception as e:
             print(f"Standard initialization failed: {e}")
             try:
-                # Fallback for generic environment
-                ee.Initialize()
-                print("GEE initialized with default project.")
-            except Exception:
-                print("GEE not initialized. Authentication required.")
+                # Check if running in Google Colab to trigger interactive auth
+                import google.colab
+                print("Google Colab detected. Triggering ee.Authenticate()...")
+                ee.Authenticate()
+                ee.Initialize(project=project)
+                print(f"GEE initialized after authentication with project: {project}")
+            except ImportError:
+                try:
+                    # Fallback for generic environment
+                    ee.Initialize()
+                    print("GEE initialized with default project.")
+                except Exception:
+                    print("GEE not initialized. Please run 'earthengine authenticate' locally.")
+            except Exception as e2:
+                print(f"Authentication/Initialization failed: {e2}")
 
     def get_time_series(self, lat, lon, start_date='2018-04-01', end_date='2018-11-01'):
         """
