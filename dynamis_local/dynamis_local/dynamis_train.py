@@ -92,11 +92,12 @@ def _train_fold(
             pl_flat = out['pheno_logits'].reshape(-1, len(PHENOPHASES))
             pb_flat = pb.reshape(-1)
             # v6 FIX #6: prefer -100 sentinel, fallback to clamp(min=0)
+            is_rice = (cb == 0).unsqueeze(1).expand(-1, pb.size(1)).reshape(-1)
             try:
                 loss_d = dynamis_loss(
                     out['crop_logits'], cb, pl_flat, pb_flat, out['innovations'],
                     lambda_innovation=lambda_innovation, lambda_ece=lambda_ece,
-                    class_weights_crop=crop_w,
+                    class_weights_crop=crop_w, is_rice=is_rice
                 )
             except (RuntimeError, IndexError, AssertionError):
                 if not warned_fallback:
@@ -106,7 +107,7 @@ def _train_fold(
                     out['crop_logits'], cb, pl_flat, pb_flat.clamp(min=0),
                     out['innovations'],
                     lambda_innovation=lambda_innovation, lambda_ece=lambda_ece,
-                    class_weights_crop=crop_w,
+                    class_weights_crop=crop_w, is_rice=is_rice
                 )
             loss = loss_d['total']
             opt.zero_grad(); loss.backward()
@@ -194,11 +195,12 @@ def _train_final_model(
             out = model(xb, mask=mb, hurst=hb)
             pl_flat = out['pheno_logits'].reshape(-1, len(PHENOPHASES))
             pb_flat = pb.reshape(-1)
+            is_rice = (cb == 0).unsqueeze(1).expand(-1, pb.size(1)).reshape(-1)
             try:
                 loss_d = dynamis_loss(
                     out['crop_logits'], cb, pl_flat, pb_flat, out['innovations'],
                     lambda_innovation=lambda_innovation, lambda_ece=lambda_ece,
-                    class_weights_crop=crop_w,
+                    class_weights_crop=crop_w, is_rice=is_rice
                 )
             except (RuntimeError, IndexError, AssertionError):
                 if not warned_fallback:
@@ -208,7 +210,7 @@ def _train_final_model(
                     out['crop_logits'], cb, pl_flat, pb_flat.clamp(min=0),
                     out['innovations'],
                     lambda_innovation=lambda_innovation, lambda_ece=lambda_ece,
-                    class_weights_crop=crop_w,
+                    class_weights_crop=crop_w, is_rice=is_rice
                 )
             loss = loss_d['total']
             opt.zero_grad(); loss.backward()

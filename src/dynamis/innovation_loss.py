@@ -57,6 +57,7 @@ def dynamis_loss(
     lambda_ece: float = 0.05,
     class_weights_crop: torch.Tensor | None = None,
     class_weights_pheno: torch.Tensor | None = None,
+    is_rice: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """
     Combined loss for the dual-head Dynamis classifier.
@@ -64,13 +65,32 @@ def dynamis_loss(
     Returns dict with: total, ce_crop, ce_pheno, innov, ece_crop, ece_pheno.
     """
     ce_crop = F.cross_entropy(crop_logits, crop_labels, weight=class_weights_crop)
-    ce_pheno = F.cross_entropy(pheno_logits, pheno_labels, weight=class_weights_pheno)
+    
+    ce_pheno_raw = F.cross_entropy(pheno_logits, pheno_labels, weight=class_weights_pheno, reduction='none')
+    
+    if is_rice is not None:
+        # Weight rice phenophase loss heavily (e.g. 5x) to optimize for the competition metric
+        weight_mask = torch.where(is_rice, 5.0, 1.0)
+        valid_mask = (pheno_labels != -100)
+        denom = weight_mask[valid_mask].sum().clamp(min=1e-8)
+        ce_pheno = (ce_pheno_raw * weight_mask).sum() / denom
+    else:
+        valid_mask = (pheno_labels != -100)
+        denom = valid_mask.sum().clamp(min=1e-8)
+        ce_pheno = ce_pheno_raw.sum() / denom
+
     innov = innovation_loss(innovations)
 
     crop_probs = F.softmax(crop_logits, dim=-1)
     pheno_probs = F.softmax(pheno_logits, dim=-1)
     ece_crop = expected_calibration_error(crop_probs, crop_labels)
-    ece_pheno = expected_calibration_error(pheno_probs, pheno_labels)
+    
+    # Only calculate ECE on valid phenophase labels to avoid errors
+    valid_pheno_idx = (pheno_labels != -100)
+    if valid_pheno_idx.any():
+        ece_pheno = expected_calibration_error(pheno_probs[valid_pheno_idx], pheno_labels[valid_pheno_idx])
+    else:
+        ece_pheno = torch.tensor(0.0, device=crop_logits.device)
 
     total = (
         ce_crop

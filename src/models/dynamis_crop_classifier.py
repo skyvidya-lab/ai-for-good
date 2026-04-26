@@ -106,8 +106,13 @@ class DynamisCropClassifier(nn.Module):
             nn.Dropout(c.crop_head_dropout),
             nn.Linear(c.hidden_dim, c.n_crops),
         )
-        # Phenophase head is per-timestep, small, no physics injection
-        self.head_pheno = nn.Linear(c.hidden_dim, c.state_dim)
+        # Phenophase head with increased capacity to handle heavy rice phenophase weighting
+        self.head_pheno = nn.Sequential(
+            nn.Linear(c.hidden_dim, c.hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(c.hidden_dim, c.state_dim)
+        )
 
     def _extract_physics(
         self,
