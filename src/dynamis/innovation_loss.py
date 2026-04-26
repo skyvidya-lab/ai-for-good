@@ -55,6 +55,8 @@ def dynamis_loss(
     innovations: torch.Tensor,
     lambda_innovation: float = 0.10,
     lambda_ece: float = 0.05,
+    lambda_crop: float = 1.0,
+    lambda_pheno: float = 1.0,
     class_weights_crop: torch.Tensor | None = None,
     class_weights_pheno: torch.Tensor | None = None,
     is_rice: torch.Tensor | None = None,
@@ -66,11 +68,12 @@ def dynamis_loss(
     """
     ce_crop = F.cross_entropy(crop_logits, crop_labels, weight=class_weights_crop)
     
-    ce_pheno_raw = F.cross_entropy(pheno_logits, pheno_labels, weight=class_weights_pheno, reduction='none')
+    ce_pheno_raw = F.cross_entropy(pheno_logits, pheno_labels, weight=class_weights_pheno, ignore_index=-100, reduction='none')
     
     if is_rice is not None:
-        # Weight rice phenophase loss heavily (e.g. 5x) to optimize for the competition metric
-        weight_mask = torch.where(is_rice, 5.0, 1.0)
+        # Weight rice phenophase loss (e.g. 2.5x) to optimize for the competition metric
+        # but avoid the 5x which was overpowering the crop head in v10.
+        weight_mask = torch.where(is_rice, 2.5, 1.0)
         valid_mask = (pheno_labels != -100)
         denom = weight_mask[valid_mask].sum().clamp(min=1e-8)
         ce_pheno = (ce_pheno_raw * weight_mask).sum() / denom
@@ -93,8 +96,8 @@ def dynamis_loss(
         ece_pheno = torch.tensor(0.0, device=crop_logits.device)
 
     total = (
-        ce_crop
-        + ce_pheno
+        lambda_crop * ce_crop
+        + lambda_pheno * ce_pheno
         + lambda_innovation * innov
         + lambda_ece * (ece_crop + ece_pheno)
     )
