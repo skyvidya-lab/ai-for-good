@@ -63,14 +63,21 @@ def dynamis_loss(
 
     Returns dict with: total, ce_crop, ce_pheno, innov, ece_crop, ece_pheno.
     """
-    ce_crop = F.cross_entropy(crop_logits, crop_labels, weight=class_weights_crop)
-    ce_pheno = F.cross_entropy(pheno_logits, pheno_labels, weight=class_weights_pheno)
+    ce_crop  = F.cross_entropy(crop_logits,  crop_labels,  weight=class_weights_crop)
+    # ignore_index=-100 handles masked/unknown phenophase timesteps
+    ce_pheno = F.cross_entropy(pheno_logits, pheno_labels, weight=class_weights_pheno,
+                               ignore_index=-100)
     innov = innovation_loss(innovations)
 
-    crop_probs = F.softmax(crop_logits, dim=-1)
+    crop_probs  = F.softmax(crop_logits,  dim=-1)
     pheno_probs = F.softmax(pheno_logits, dim=-1)
-    ece_crop = expected_calibration_error(crop_probs, crop_labels)
-    ece_pheno = expected_calibration_error(pheno_probs, pheno_labels)
+    ece_crop  = expected_calibration_error(crop_probs,  crop_labels)
+    # Filter out -100 labels before computing pheno ECE
+    _valid_ph = pheno_labels != -100
+    if _valid_ph.any():
+        ece_pheno = expected_calibration_error(pheno_probs[_valid_ph], pheno_labels[_valid_ph])
+    else:
+        ece_pheno = pheno_probs.new_zeros(())
 
     total = (
         ce_crop

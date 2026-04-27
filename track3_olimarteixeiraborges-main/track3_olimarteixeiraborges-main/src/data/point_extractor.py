@@ -72,10 +72,15 @@ def extract_bands_at_point(
     out = np.full(len(bands_order), np.nan, dtype=np.float64)
     for i, band in enumerate(bands_order):
         path = band_paths.get(band)
-        if path is None or not Path(path).exists():
+        if path is None:
+            continue
+        path_str = str(path)
+        # Allow GDAL VSI paths (/vsizip/, /vsicurl/, etc.) without filesystem check.
+        # For regular paths, verify existence before opening to avoid rasterio errors.
+        if not path_str.startswith("/vsi") and not Path(path_str).exists():
             continue
         try:
-            out[i] = extract_pixel_value(path, lon, lat, src_crs=src_crs)
+            out[i] = extract_pixel_value(path_str, lon, lat, src_crs=src_crs)
         except Exception:
             # Malformed TIFF or CRS mismatch — leave NaN
             continue
