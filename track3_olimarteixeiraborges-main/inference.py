@@ -1,12 +1,15 @@
 import os
 import sys
 import json
+import pickle
 import argparse
+import re
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as _F
 import rasterio
 from rasterio.warp import transform_bounds
 
@@ -18,11 +21,12 @@ from src.data import (
     extract_bands_at_point,
     FEATURE_NAMES,
     N_FEATURES,
+    batch_phenology_features,
 )
 from src.data.temporal_builder import point_region_from_coords
 from src.dynamis import hurst_regional, hurst_features, PHENOPHASES
 
-MODEL_PATH = '/workspace/models/dynamis_terra_v9.pt'
+MODEL_PATH = '/workspace/models/dynamis_terra_v11.pt'
 
 
 def _parse_date(d: str):
@@ -36,6 +40,73 @@ def _parse_date(d: str):
         return datetime.fromisoformat(d.strip())
     except Exception:
         return None
+
+
+def _canonical_date(s):
+    """Normalise date to YYYY-MM-DD; raises ValueError on failure."""
+    s = str(s).strip()
+    for fmt in ('%Y-%m-%d', '%Y/%m/%d'):
+        try:
+            return datetime.strptime(s, fmt).strftime('%Y-%m-%d')
+        except (ValueError, TypeError):
+            continue
+    parts = re.split(r'[-/]', s)
+    if len(parts) == 3:
+        y, m, d = parts
+        return f'{int(y):04d}-{int(m):02d}-{int(d):02d}'
+    raise ValueError(f'Unrecognised date format: {s!r}')
+
+
+def flatten_features_v10(ps_list, mask_arr, hurst_arr):
+    """
+    Compute v10 flat features from a list of PointSeries objects.
+    Matches train_dynamis_v10.py: 9 stats × N_FEATURES + 1 (n_valid) + pheno + hurst
+    """
+    n   = len(ps_list)
+    F   = N_FEATURES
+    n_stats = 9
+    base = np.zeros((n, F * n_stats + 1), dtype=np.float32)
+
+    for i, ps in enumerate(ps_list):
+        T_ps  = ps.features.shape[0]
+        # mask_arr[i] has T_max entries; only the first T_ps correspond to this point
+        valid = mask_arr[i, :T_ps]
+        n_v   = int(valid.sum())
+        base[i, F * n_stats] = n_v
+
+        if n_v < 1:
+            continue
+
+        Xi = ps.features[valid].astype(np.float32)
+
+        base[i, 0*F:1*F] = Xi.mean(axis=0)
+        base[i, 1*F:2*F] = Xi.std(axis=0)
+        base[i, 2*F:3*F] = Xi.max(axis=0)
+        base[i, 3*F:4*F] = Xi.min(axis=0)
+
+        if n_v >= 2:
+            try:
+                valid_dates = [ps.dates[t] for t in range(len(ps.dates)) if mask_arr[i, t]]
+                d0   = _canonical_date(valid_dates[0])
+                d1   = _canonical_date(valid_dates[-1])
+                span = (datetime.strptime(d1, '%Y-%m-%d') -
+                        datetime.strptime(d0, '%Y-%m-%d')).days
+                if span > 0:
+                    base[i, 4*F:5*F] = (Xi[-1] - Xi[0]) / span
+                else:
+                    base[i, 4*F:5*F] = (Xi[-1] - Xi[0]) / max(n_v - 1, 1)
+            except Exception:
+                base[i, 4*F:5*F] = (Xi[-1] - Xi[0]) / max(n_v - 1, 1)
+
+        if n_v >= 4:
+            base[i, 5*F:6*F] = np.percentile(Xi, 10, axis=0)
+            base[i, 6*F:7*F] = np.percentile(Xi, 25, axis=0)
+            base[i, 7*F:8*F] = np.percentile(Xi, 75, axis=0)
+            base[i, 8*F:9*F] = np.percentile(Xi, 90, axis=0)
+
+    pheno_feats = batch_phenology_features(ps_list, hurst_arr)
+    X_flat = np.concatenate([base, pheno_feats, hurst_arr.reshape(-1, 1)], axis=1)
+    return X_flat
 
 
 def build_bbox_index(view):
@@ -58,14 +129,13 @@ def build_bbox_index(view):
 
 def _load_model_ensemble(checkpoint, device):
     """
-    Load model(s) from checkpoint.  Returns list of eval-mode models.
-    Supports both v9 ensemble checkpoints and legacy v8 single-model checkpoints.
+    Load DynamisV9 model(s) from checkpoint.  Returns list of eval-mode models.
+    Supports v10_stacked, v9_dual_timescale, and legacy v8 checkpoints.
     """
     version = checkpoint.get('model_version', 'v8')
     config  = checkpoint['config']
 
-    if version == 'v9_dual_timescale' or 'ensemble_state_dicts' in checkpoint:
-        # V9 ensemble
+    if version in ('v10_stacked', 'v9_dual_timescale') or 'ensemble_state_dicts' in checkpoint:
         from src.models import DynamisTerraV9, DynamisV9Config
         cfg = DynamisV9Config(**config)
         models = []
@@ -74,9 +144,8 @@ def _load_model_ensemble(checkpoint, device):
             m.load_state_dict(sd)
             m.eval()
             models.append(m.to(device))
-        print(f'  [v9 ensemble] {len(models)} models loaded | device={device}')
+        print(f'  [{version}] {len(models)} DynamisV9 models loaded | device={device}')
     else:
-        # Legacy v8 single model
         from src.models import DynamisCropClassifier, DynamisModelConfig
         cfg = DynamisModelConfig(**config)
         m = DynamisCropClassifier(cfg)
@@ -86,6 +155,19 @@ def _load_model_ensemble(checkpoint, device):
         print(f'  [v8 single] 1 model loaded | device={device}')
 
     return models
+
+
+def _load_stacking_models(checkpoint):
+    """
+    Load LightGBM + meta-LightGBM from a v10_stacked checkpoint.
+    Returns (lgb_model, meta_model) or (None, None) if not a v10 checkpoint.
+    """
+    if checkpoint.get('model_version') != 'v10_stacked':
+        return None, None
+    lgb_model  = pickle.loads(checkpoint['lgb_model_bytes'])
+    meta_model = pickle.loads(checkpoint['meta_model_bytes'])
+    print(f'  [v10] LGB + meta models loaded from checkpoint')
+    return lgb_model, meta_model
 
 
 def _run_ensemble(models, X_t, mask_t, hurst_t):
@@ -169,11 +251,17 @@ def main(data_dir='/input', result_dir='/output'):
 
     print('\n=== Loading model(s) ===')
     checkpoint = torch.load(MODEL_PATH, map_location='cpu', weights_only=False)
+    model_version = checkpoint.get('model_version', 'v8')
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     models = _load_model_ensemble(checkpoint, device)
-    CROPS = checkpoint.get('crop_classes', ['rice', 'corn', 'soybean'])
+    CROPS  = checkpoint.get('crop_classes', ['rice', 'corn', 'soybean'])
 
-    # loc_results: key -> (crop_str, pheno_logits[T,7], state_traj[T,7], PointSeries)
+    # For v10: also load LightGBM + meta stacking models
+    lgb_model, meta_model = _load_stacking_models(checkpoint)
+    use_stacking = (lgb_model is not None and meta_model is not None)
+    print(f'  Stacking: {"ENABLED (v10)" if use_stacking else "disabled"}')
+
+    # loc_results: key -> (crop_str, pheno_logits[T,7], _, PointSeries)
     loc_results = {}
 
     if unique_locs:
@@ -187,7 +275,7 @@ def main(data_dir='/input', result_dir='/output'):
         print('\n=== Computing Hurst features ===')
         for i, (loc_key, ps) in enumerate(unique_locs):
             T = ps.features.shape[0]
-            X[i, :T]       = ps.features.astype(np.float32)
+            X[i, :T]        = ps.features.astype(np.float32)
             mask_arr[i, :T] = ps.mask
 
             region_view = view.get(ps.region, {})
@@ -214,20 +302,41 @@ def main(data_dir='/input', result_dir='/output'):
 
         X = np.nan_to_num(X, nan=0.0)
 
-        print('\n=== Running ensemble inference ===')
-        X_t      = torch.from_numpy(X).float().to(device)
-        mask_t   = torch.from_numpy(mask_arr).bool().to(device)
-        hurst_t  = torch.from_numpy(hurst_vec).float().to(device)
+        print('\n=== Running DynamisV9 ensemble ===')
+        X_t     = torch.from_numpy(X).float().to(device)
+        mask_t  = torch.from_numpy(mask_arr).bool().to(device)
+        hurst_t = torch.from_numpy(hurst_vec).float().to(device)
 
         out = _run_ensemble(models, X_t, mask_t, hurst_t)
 
-        preds          = out['crop_logits'].argmax(dim=-1).cpu().numpy()
-        pheno_logits_np = out['pheno_logits'].cpu().numpy()   # (n, T_max, 7)
-        state_traj_np   = out['state_trajectory'].cpu().numpy() # (n, T_max, 7)
+        crop_logits_np  = out['crop_logits'].cpu().numpy()      # (n, 3)
+        pheno_logits_np = out['pheno_logits'].cpu().numpy()      # (n, T_max, 7)
+
+        if use_stacking:
+            print('\n=== Running v10 stacking ===')
+            ps_list = [ps for _, ps in unique_locs]
+            X_flat  = flatten_features_v10(ps_list, mask_arr, hurst_vec)
+            print(f'  Flat features shape: {X_flat.shape}')
+
+            lgb_proba   = lgb_model.predict_proba(X_flat).astype(np.float32)  # (n, 3)
+            dyn_softmax = _F.softmax(
+                torch.from_numpy(crop_logits_np).float(), dim=-1
+            ).numpy()  # (n, 3)
+
+            meta_X = np.concatenate([
+                lgb_proba,       # (n, 3)
+                dyn_softmax,     # (n, 3)
+                crop_logits_np,  # (n, 3) raw logits
+            ], axis=1).astype(np.float32)
+
+            preds = meta_model.predict(meta_X).astype(int)          # (n,)
+            print(f'  Meta predictions: {np.bincount(preds, minlength=3).tolist()}')
+        else:
+            preds = crop_logits_np.argmax(axis=-1)
 
         for i, (loc_key, ps) in enumerate(unique_locs):
             loc_results[loc_key] = (
-                CROPS[int(preds[i])], pheno_logits_np[i], state_traj_np[i], ps
+                CROPS[int(preds[i])], pheno_logits_np[i], None, ps
             )
 
     # Fallback prediction from first successful location
@@ -253,7 +362,7 @@ def main(data_dir='/input', result_dir='/output'):
             results[key_str] = [fallback_crop, fallback_pheno]
             continue
 
-        crop_pred, pheno_logits_i, state_traj_i, ps = loc_results[loc_key]
+        crop_pred, pheno_logits_i, _, ps = loc_results[loc_key]
 
         target_dt = _parse_date(date_str)
         if target_dt is not None and ps.dates:

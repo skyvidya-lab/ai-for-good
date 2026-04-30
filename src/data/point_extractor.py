@@ -37,7 +37,11 @@ def extract_pixel_value(
     Returns NaN on out-of-bounds or no-data.
     """
     _require_rasterio()
-    with rasterio.open(tiff_path) as src:
+    # Always pass the raw string. On Windows, wrapping a "/vsizip/..." URI in a
+    # pathlib.Path converts forward slashes to backslashes, which breaks GDAL's
+    # virtual filesystem prefix.
+    tiff_arg = tiff_path if isinstance(tiff_path, str) else str(tiff_path)
+    with rasterio.open(tiff_arg) as src:
         xs, ys = warp_transform(src_crs, src.crs, [lon], [lat])
         row, col = src.index(xs[0], ys[0])
         h, w = src.height, src.width
@@ -72,12 +76,13 @@ def extract_bands_at_point(
     out = np.full(len(bands_order), np.nan, dtype=np.float64)
     for i, band in enumerate(bands_order):
         path = band_paths.get(band)
-        if path is None or not Path(path).exists():
+        if path is None:
             continue
+        # Skip Path.exists() precheck: it mangles GDAL VSI URIs like
+        # /vsizip/... on Windows. The try/except below covers missing files.
         try:
             out[i] = extract_pixel_value(path, lon, lat, src_crs=src_crs)
         except Exception:
-            # Malformed TIFF or CRS mismatch — leave NaN
             continue
     return out
 

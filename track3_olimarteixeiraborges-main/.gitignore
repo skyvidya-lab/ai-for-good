@@ -31,3 +31,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Models — só o último vai para o repo
+models/*.pt
+!models/dynamis_terra_v11.pt
