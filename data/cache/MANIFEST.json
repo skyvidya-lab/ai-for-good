@@ -1,0 +1,63 @@
+{
+  "version": "v1_full778",
+  "created_utc": "2026-04-30T15:17:42.590649+00:00",
+  "n_points": 778,
+  "n_regions": 49,
+  "n_obs_base": 13597,
+  "feature_names_base": [
+    "B01",
+    "B02",
+    "B03",
+    "B04",
+    "B05",
+    "B06",
+    "B07",
+    "B08",
+    "B8A",
+    "B09",
+    "B11",
+    "B12",
+    "ndvi",
+    "evi",
+    "ndwi",
+    "savi",
+    "lswi"
+  ],
+  "feature_names_agro": [
+    "precip_acc",
+    "soil_moisture",
+    "temp",
+    "smap_wetness"
+  ],
+  "phenophases_canon": [
+    "Dormancy",
+    "Greenup",
+    "MidGreenup",
+    "Peak",
+    "Maturity",
+    "MidSenescence",
+    "Senescence"
+  ],
+  "files": {
+    "points_meta": {
+      "path": "points_meta.geoparquet",
+      "md5": "3217941d31b4eaba0dd4fb4cdf87e04d",
+      "bytes": 39437
+    },
+    "observations_base": {
+      "path": "observations_base.parquet",
+      "md5": "d18d240ccc192be39fe99fb88c87871b",
+      "bytes": 999251
+    },
+    "phenophases": {
+      "path": "phenophases.parquet",
+      "md5": "0f726c2be24a3db7f89776f9b91ebe78",
+      "bytes": 15010
+    },
+    "observations_enriched": {
+      "path": "observations_enriched.parquet",
+      "md5": "81fa0da738587252465638660500d46b",
+      "bytes": 1223167
+    }
+  }
+}

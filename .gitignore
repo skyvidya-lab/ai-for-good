@@ -28,7 +28,14 @@ Thumbs.db
 *.swo
 
 # Data — DO NOT commit datasets
-/data/
+# Ignore everything inside /data/ except the small parquet cache (~2 MB),
+# which we ship so Colab can bootstrap without regenerating from 70 GB of zips.
+/data/*
+!/data/cache/
+/data/cache/*
+!/data/cache/*.parquet
+!/data/cache/*.geoparquet
+!/data/cache/MANIFEST.json
 notebooks/treino_v11_gpu_lucas/
 scripts/run.log
 background/ai-and-space-computing-challenge/Guide to the Second Round_track1/test_input_sample/
