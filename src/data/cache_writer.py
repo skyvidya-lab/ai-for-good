@@ -21,6 +21,14 @@ from .temporal_builder import FEATURE_NAMES, PointSeries
 
 AGRO_FEATURES: tuple[str, ...] = ("precip_acc", "soil_moisture", "temp", "smap_wetness")
 
+# Tier-2 GEE expansion: ET (MODIS MOD16), LST day/night (MODIS MOD11),
+# surface solar radiation (ERA5), Vapor Pressure Deficit derived from
+# 2m temperature and 2m dewpoint (ERA5), and 10m wind speed (ERA5).
+EXTRA_AGRO_FEATURES: tuple[str, ...] = (
+    "et", "pet", "lst_day", "lst_night", "solar_rad", "vpd", "wind_10m",
+)
+EXTENDED_AGRO_FEATURES: tuple[str, ...] = AGRO_FEATURES + EXTRA_AGRO_FEATURES  # 11
+
 PHENOPHASES_CANON: tuple[str, ...] = (
     "Dormancy", "Greenup", "MidGreenup", "Peak",
     "Maturity", "MidSenescence", "Senescence",
