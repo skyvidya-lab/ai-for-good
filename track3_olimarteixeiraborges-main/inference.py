@@ -156,14 +156,18 @@ def main(data_dir='/input', result_dir='/output'):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     checkpoint = torch.load(MODEL_PATH, map_location='cpu', weights_only=False)
     
+    # Descobre dinamicamente a quantidade de features usadas no treino (ex: 29)
+    trained_f_agro = len(checkpoint['folds'][0]['mu'])
+    print(f"  Model was trained with {trained_f_agro} features. Base satellite features: {N_FEATURES}.")
+    
     crop_models = []
     pheno_models = []
     for fold_data in checkpoint['folds']:
-        c_mod = LTAECrop(N_FEATURES, n_crops=3)
+        c_mod = LTAECrop(trained_f_agro, n_crops=3)
         c_mod.load_state_dict(fold_data['crop_state'])
         c_mod.to(device).eval()
         
-        p_mod = LTAERicePhenology(N_FEATURES, len(PHENOPHASES))
+        p_mod = LTAERicePhenology(trained_f_agro, len(PHENOPHASES))
         p_mod.load_state_dict(fold_data['pheno_state'])
         p_mod.to(device).eval()
         
@@ -177,7 +181,7 @@ def main(data_dir='/input', result_dir='/output'):
     if unique_locs:
         T_max = max(ps.features.shape[0] for _, ps in unique_locs)
         n = len(unique_locs)
-        X = np.zeros((n, T_max, N_FEATURES), dtype=np.float32)
+        X = np.zeros((n, T_max, trained_f_agro), dtype=np.float32)
         mask_arr = np.zeros((n, T_max), dtype=bool)
         doy_arr = np.zeros((n, T_max), dtype=np.int64)
         hurst_vec = np.full(n, 0.5, dtype=np.float32)
@@ -186,7 +190,8 @@ def main(data_dir='/input', result_dir='/output'):
         print('\\n=== Computing Hurst & DOY features ===')
         for i, (loc_key, ps) in enumerate(unique_locs):
             T = ps.features.shape[0]
-            X[i, :T] = ps.features.astype(np.float32)
+            # O PointSeries (satélite) traz N_FEATURES (ex: 25)
+            X[i, :T, :N_FEATURES] = ps.features.astype(np.float32)
             mask_arr[i, :T] = ps.mask
             doy_arr[i, :T] = [get_doy(d) for d in ps.dates]
 
@@ -220,6 +225,11 @@ def main(data_dir='/input', result_dir='/output'):
         pad_t = ~torch.tensor(mask_arr, dtype=torch.bool).to(device)
 
         for (c_mod, fd), (p_mod, _) in zip(crop_models, pheno_models):
+            # Preenche as features agronômicas ausentes (índices 25+) com a média (mu)
+            # Para que a normalização (X - mu) / sd resulte em 0.0, não perturbando a rede neural.
+            if trained_f_agro > N_FEATURES:
+                X[:, :, N_FEATURES:] = fd['mu'][N_FEATURES:]
+                
             X_n = np.where(mask_arr[..., None], (X - fd['mu']) / fd['sd'], 0.0)
             h_n = (hurst_vec - fd['hm']) / fd['hsd']
             

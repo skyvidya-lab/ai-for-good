@@ -17,10 +17,10 @@ import pandas as pd
 from .folder_consolidator import dates_in_order
 from .point_extractor import extract_bands_at_point
 from .sentinel2_loader import MODEL_BANDS
-from .vegetation_indices import INDEX_NAMES, compute_all_indices
+from .vegetation_indices import EXTENDED_INDEX_NAMES, compute_extended_indices
 
-FEATURE_NAMES: tuple[str, ...] = tuple(MODEL_BANDS) + INDEX_NAMES
-N_FEATURES = len(FEATURE_NAMES)  # 12 + 5 = 17
+FEATURE_NAMES: tuple[str, ...] = tuple(MODEL_BANDS) + EXTENDED_INDEX_NAMES
+N_FEATURES = len(FEATURE_NAMES)  # 12 + 13 = 25
 
 
 @dataclass
@@ -32,7 +32,7 @@ class PointSeries:
     lon: float
     lat: float
     dates: list[str]        # length T
-    features: np.ndarray    # (T, 17) — bands + indices
+    features: np.ndarray    # (T, 25) — bands + indices
     mask: np.ndarray        # (T,) bool — True where the full band set was available
     crop_type: str | None = None
     phenophase_by_date: dict[str, str] | None = None  # {date: phenophase_name}
@@ -85,8 +85,8 @@ def build_point_series(
         if np.all(np.isnan(bands_vec[:8])):  # visible+NIR must be present
             continue
         X[t, : len(MODEL_BANDS)] = bands_vec
-        indices = compute_all_indices(bands_vec, scale=True)
-        for i, name in enumerate(INDEX_NAMES):
+        indices = compute_extended_indices(bands_vec, scale=True)
+        for i, name in enumerate(EXTENDED_INDEX_NAMES):
             X[t, len(MODEL_BANDS) + i] = indices[name]
         mask[t] = not np.any(np.isnan(bands_vec))
 

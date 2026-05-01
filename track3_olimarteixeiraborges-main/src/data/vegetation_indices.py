@@ -94,6 +94,109 @@ def compute_all_indices(bands_vec: np.ndarray, scale: bool = True) -> dict[str, 
 INDEX_NAMES: tuple[str, ...] = ("ndvi", "evi", "ndwi", "savi", "lswi")
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Extended indices (Tier-1 expansion) — derived from MODEL_BANDS only.
+# Designed for: water discrimination (rice flooded), chlorophyll
+# (Maturity / Senescence), biophysical proxies (LAI / FAPAR / FCOVER),
+# and non-photosynthetic vegetation (residue / harvest).
+# ─────────────────────────────────────────────────────────────────────
+def mndwi(green: np.ndarray, swir1: np.ndarray) -> np.ndarray:
+    """Modified NDWI (Xu 2006). Strong for surface water."""
+    green = np.asarray(green, dtype=np.float64)
+    swir1 = np.asarray(swir1, dtype=np.float64)
+    return (green - swir1) / (green + swir1 + EPS)
+
+
+def awei(green: np.ndarray, nir: np.ndarray, swir1: np.ndarray, swir2: np.ndarray) -> np.ndarray:
+    """Automated Water Extraction Index (Feyisa 2014, no-shadow variant)."""
+    green = np.asarray(green, dtype=np.float64)
+    nir = np.asarray(nir, dtype=np.float64)
+    swir1 = np.asarray(swir1, dtype=np.float64)
+    swir2 = np.asarray(swir2, dtype=np.float64)
+    return 4.0 * (green - swir1) - (0.25 * nir + 2.75 * swir2)
+
+
+def ndre(b8a: np.ndarray, b5: np.ndarray) -> np.ndarray:
+    """Normalised Difference Red-Edge — chlorophyll proxy (Barnes 2000)."""
+    b8a = np.asarray(b8a, dtype=np.float64)
+    b5 = np.asarray(b5, dtype=np.float64)
+    return (b8a - b5) / (b8a + b5 + EPS)
+
+
+def mtci(b6: np.ndarray, b5: np.ndarray, b4: np.ndarray) -> np.ndarray:
+    """MERIS Terrestrial Chlorophyll Index (Dash & Curran 2004)."""
+    b6 = np.asarray(b6, dtype=np.float64)
+    b5 = np.asarray(b5, dtype=np.float64)
+    b4 = np.asarray(b4, dtype=np.float64)
+    return (b6 - b5) / (b5 - b4 + EPS)
+
+
+def fcover_proxy(ndvi_v: np.ndarray) -> np.ndarray:
+    """Fraction Vegetation Cover via NDVI rescaling (Carlson & Ripley 1997).
+    fcover ≈ ((NDVI - NDVI_soil) / (NDVI_veg - NDVI_soil))**2, clipped to [0,1]."""
+    n = np.clip(np.asarray(ndvi_v, dtype=np.float64), 0.0, 1.0)
+    fc = (n - 0.05) / 0.85
+    return np.clip(fc, 0.0, 1.0)
+
+
+def lai_proxy(ndvi_v: np.ndarray) -> np.ndarray:
+    """LAI proxy via Beer's law on FCOVER. Empirical, capped at 7."""
+    fc = fcover_proxy(ndvi_v)
+    fc = np.clip(fc, 0.0, 0.99)
+    lai = -2.0 * np.log(1.0 - fc)
+    return np.clip(lai, 0.0, 7.0)
+
+
+def fapar_proxy(ndvi_v: np.ndarray) -> np.ndarray:
+    """FAPAR proxy from Myneni & Williams 1994 linear approximation."""
+    n = np.asarray(ndvi_v, dtype=np.float64)
+    return np.clip(1.24 * n - 0.168, 0.0, 1.0)
+
+
+def fnpv_proxy(swir1: np.ndarray, swir2: np.ndarray) -> np.ndarray:
+    """Non-photosynthetic vegetation proxy (Guerschman 2009 simplified):
+    increases with cellulose / lignin → senesced canopy and crop residue."""
+    swir1 = np.asarray(swir1, dtype=np.float64)
+    swir2 = np.asarray(swir2, dtype=np.float64)
+    return swir2 / (swir1 + EPS)
+
+
+EXTRA_INDEX_NAMES: tuple[str, ...] = (
+    "mndwi", "awei", "ndre", "mtci", "fcover", "lai", "fapar", "fnpv",
+)
+EXTENDED_INDEX_NAMES: tuple[str, ...] = INDEX_NAMES + EXTRA_INDEX_NAMES  # 13 total
+
+
+def compute_extended_indices(bands_vec: np.ndarray, scale: bool = True) -> dict[str, float]:
+    """Compute all 13 extended indices (5 base + 8 new) from MODEL_BANDS vector."""
+    v = scale_l2a(bands_vec) if scale else np.asarray(bands_vec, dtype=np.float64)
+    blue = v[_BAND_IDX["B02"]]
+    green = v[_BAND_IDX["B03"]]
+    red = v[_BAND_IDX["B04"]]
+    b5 = v[_BAND_IDX["B05"]]
+    b6 = v[_BAND_IDX["B06"]]
+    nir = v[_BAND_IDX["B08"]]
+    b8a = v[_BAND_IDX["B8A"]]
+    swir1 = v[_BAND_IDX["B11"]]
+    swir2 = v[_BAND_IDX["B12"]]
+    n = float(ndvi(nir, red))
+    return {
+        "ndvi": n,
+        "evi": float(evi(nir, red, blue)),
+        "ndwi": float(ndwi(green, nir)),
+        "savi": float(savi(nir, red)),
+        "lswi": float(lswi(nir, swir1)),
+        "mndwi": float(mndwi(green, swir1)),
+        "awei": float(awei(green, nir, swir1, swir2)),
+        "ndre": float(ndre(b8a, b5)),
+        "mtci": float(mtci(b6, b5, red)),
+        "fcover": float(fcover_proxy(n)),
+        "lai": float(lai_proxy(n)),
+        "fapar": float(fapar_proxy(n)),
+        "fnpv": float(fnpv_proxy(swir1, swir2)),
+    }
+
+
 __all__ = [
     "scale_l2a",
     "ndvi",
@@ -101,7 +204,18 @@ __all__ = [
     "ndwi",
     "savi",
     "lswi",
+    "mndwi",
+    "awei",
+    "ndre",
+    "mtci",
+    "fcover_proxy",
+    "lai_proxy",
+    "fapar_proxy",
+    "fnpv_proxy",
     "compute_all_indices",
+    "compute_extended_indices",
     "INDEX_NAMES",
+    "EXTRA_INDEX_NAMES",
+    "EXTENDED_INDEX_NAMES",
     "L2A_SCALE",
 ]
