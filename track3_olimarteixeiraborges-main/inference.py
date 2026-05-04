@@ -28,8 +28,8 @@ from src.data import (
 from src.data.temporal_builder import point_region_from_coords
 from src.dynamis import hurst_regional, hurst_features, PHENOPHASES
 
-MODEL_PATH = '/workspace/models/ltae_ensemble.pt'
-CROPS = ['rice', 'corn', 'soybean']
+MODEL_PATH = '/workspace/models/ltae_ensemble_v10.pt'
+CROPS = ['rice', 'corn', 'soybean', 'background']
 
 
 def _parse_date(d: str):
@@ -63,11 +63,11 @@ def build_bbox_index(view):
     return bbox_index
 
 # ==========================================
-# L-TAE V4 Architecture Definitions
+# L-TAE V10 Architecture Definitions
 # ==========================================
 
-class PositionalEncodingDOY(nn.Module):
-    def __init__(self, d_model, max_len=367):
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=150):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
@@ -75,34 +75,34 @@ class PositionalEncodingDOY(nn.Module):
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
         self.register_buffer('pe', pe)
-    def forward(self, x, doy):
-        return x + self.pe[torch.clamp(doy, 0, 366)]
+    def forward(self, x):
+        return x + self.pe[:x.size(1), :].unsqueeze(0)
 
 class LTAECore(nn.Module):
     def __init__(self, input_dim, d_model=128, n_heads=4, n_layers=3, dropout=0.2):
         super().__init__()
         self.input_proj = nn.Linear(input_dim, d_model)
-        self.doy_encoding = PositionalEncodingDOY(d_model)
+        self.pos_encoding = PositionalEncoding(d_model)
         encoder_layer = nn.TransformerEncoderLayer(d_model, nhead=n_heads, dim_feedforward=d_model*4, dropout=dropout, batch_first=True)
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
-    def forward(self, x, doy, pad_mask=None):
+    def forward(self, x, pad_mask=None):
         h = self.input_proj(x)
-        h = self.doy_encoding(h, doy)
+        h = self.pos_encoding(h)
         return self.transformer(h, src_key_padding_mask=pad_mask)
 
 class LTAECrop(nn.Module):
-    def __init__(self, input_dim, n_crops=3, d_model=128):
+    def __init__(self, input_dim, n_crops=4, d_model=128):
         super().__init__()
         self.core = LTAECore(input_dim + 1, d_model=d_model, n_layers=2, dropout=0.3)
         self.crop_head = nn.Sequential(
             nn.Dropout(0.3),
             nn.Linear(d_model, n_crops)
         )
-    def forward(self, x, doy, hurst, pad_mask=None):
+    def forward(self, x, hurst, pad_mask=None):
         B, T, _ = x.shape
         h_exp = hurst.unsqueeze(1).unsqueeze(2).expand(-1, T, 1)
         x_in = torch.cat([x, h_exp], dim=-1)
-        h = self.core(x_in, doy, pad_mask)
+        h = self.core(x_in, pad_mask)
         valid_mask = ~pad_mask
         h_pool = (h * valid_mask.unsqueeze(-1)).sum(1) / valid_mask.sum(1, keepdim=True).clamp(min=1)
         return self.crop_head(h_pool)
@@ -112,8 +112,8 @@ class LTAERicePhenology(nn.Module):
         super().__init__()
         self.core = LTAECore(input_dim, d_model=d_model, n_layers=3, dropout=0.2)
         self.pheno_head = nn.Linear(d_model, n_pheno)
-    def forward(self, x, doy, pad_mask=None):
-        h = self.core(x, doy, pad_mask)
+    def forward(self, x, pad_mask=None):
+        h = self.core(x, pad_mask)
         return self.pheno_head(h)
 
 
@@ -163,7 +163,7 @@ def main(data_dir='/input', result_dir='/output'):
     crop_models = []
     pheno_models = []
     for fold_data in checkpoint['folds']:
-        c_mod = LTAECrop(trained_f_agro, n_crops=3)
+        c_mod = LTAECrop(trained_f_agro, n_crops=4)
         c_mod.load_state_dict(fold_data['crop_state'])
         c_mod.to(device).eval()
         
@@ -218,10 +218,9 @@ def main(data_dir='/input', result_dir='/output'):
         X = np.nan_to_num(X, nan=0.0)
 
         print('\\n=== Running L-TAE Ensemble Inference ===')
-        crop_probs = np.zeros((n, 3))
+        crop_probs = np.zeros((n, 4))
         pheno_logits_sum = np.zeros((n, T_max, len(PHENOPHASES)))
         
-        doy_t = torch.tensor(doy_arr, dtype=torch.long).to(device)
         pad_t = ~torch.tensor(mask_arr, dtype=torch.bool).to(device)
 
         for (c_mod, fd), (p_mod, _) in zip(crop_models, pheno_models):
@@ -237,10 +236,10 @@ def main(data_dir='/input', result_dir='/output'):
             h_t = torch.tensor(h_n, dtype=torch.float32).to(device)
             
             with torch.no_grad():
-                c_out = c_mod(X_t, doy_t, h_t, pad_t)
+                c_out = c_mod(X_t, h_t, pad_t)
                 crop_probs += torch.softmax(c_out, dim=-1).cpu().numpy()
                 
-                p_out = p_mod(X_t, doy_t, pad_t)
+                p_out = p_mod(X_t, pad_t)
                 pheno_logits_sum += p_out.cpu().numpy()
                 
         preds = crop_probs.argmax(axis=-1)

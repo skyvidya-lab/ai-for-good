@@ -35,3 +35,4 @@ Thumbs.db
 # Models — só o último vai para o repo
 models/*.pt
 !models/dynamis_terra_v11.pt
+!models/ltae_ensemble_v10.pt
