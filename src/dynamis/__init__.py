@@ -20,6 +20,12 @@ from .hurst_geo import (
 )
 from .ood import OODModel, combined_ood_score, fit_combined_ood, softmax_entropy
 from .innovation_loss import dynamis_loss, expected_calibration_error, innovation_loss
+from .phenology_decoder import (
+    estimate_greenup_anchor,
+    get_crop_cumulative_days,
+    viterbi_pheno_decode,
+    viterbi_pheno_decode_batch,
+)
 from .phenology_prior import (
     N_PHENOPHASES,
     PHENO_TO_IDX,
@@ -76,4 +82,9 @@ __all__ = [
     "get_crop_interval_prior",
     "phenophase_name_to_index",
     "phenophase_index_to_name",
+    # phenology decoder (V12)
+    "estimate_greenup_anchor",
+    "get_crop_cumulative_days",
+    "viterbi_pheno_decode",
+    "viterbi_pheno_decode_batch",
 ]
