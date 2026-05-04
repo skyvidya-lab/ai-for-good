@@ -1,0 +1,96 @@
+Ready for review
+Select text to add comments on the plan
+Critical Analysis Plan — 09_dynamis_v9_top3_ltae.ipynb
+Context
+The notebook reports a 5-fold OOF score of F1 Crop = 0.9953, F1 RicePheno (strict) = 0.9915, leaderboard projection 99.34/100 ("expected 1st place"). The user asked for a critical, scientific review — leakage, overfitting, and metric inflation — applying creative / critical / systemic / resilient / analytical thinking. This plan reads the actual code paths, the executed run reports, the data pipeline, and the official task definition, then enumerates concrete falsification experiments before any code changes are committed.
+
+What the notebook actually does (verified by reading 09_dynamis_v9_top3_ltae.ipynb)
+Data: loads aggregated cache (full variant → 29 features). Builds (n=778, T_max, 29) tensors plus per-point Hurst, DOY array, and Gaussian soft phenology labels with σ=10 days centered at each known event DOY.
+CV: StratifiedGroupKFold(5, shuffle=True, random_state=42) with groups = regions (50 distinct), stratified by crop_y for the crop task; for rice phenology, splits the rice subset (n≈367) by region.
+Crop model (LTAECrop): 2-layer Transformer encoder, d_model=128, dropout 0.3, time-step dropout 15%, DOY positional encoding, mean-pool of valid timesteps + 1 linear head. Hurst is concatenated as a constant 18th channel.
+Pheno model (LTAERicePhenology): 3-layer Transformer, dropout 0.2, time-step dropout 10%, per-timestep linear head, soft cross-entropy on valid_pheno_mask (timesteps within ~σ of an event).
+Selection: per fold, best_state and best_preds are kept at the epoch with lowest val loss on that same fold's val set. best_preds is then written into the OOF prediction array.
+Reported metrics:
+Per-fold rice pheno F1 ("Soft Labels"): 0.82 – 0.88.
+Global "strict" rice pheno F1 over the subset where pheno_y_strict[i,t] != -100 (i.e., timesteps whose DOY exactly matches a labelled phenophase event): 0.9915 on 158 rows total.
+Global crop F1 (5-fold OOF): 0.9953.
+Final score = 100 * (0.5 * f1_crop + 0.5 * f1_pheno_strict) = 99.34.
+Permutation importance is computed only on fold-5 val set using the same checkpoint that was selected by val loss on that same val set (double-dipping on val).
+Background class (4th crop label allowed by the platform per .claude/kb/challenge/task-description.md) is silently dropped: crop_y[i] = CROPS.index(ps.crop_type) if ps.crop_type in CROPS else 0 — all unknown labels are mapped to rice (index 0). This is a latent bug regardless of leakage.
+Hypotheses to falsify (ordered by impact)
+H1 — Calendar shortcut on phenology (suspected dominant inflator)
+Claim: pheno_y_strict is 1-to-1 with the very DOYs around which training Gaussians peaked. The Transformer has a PositionalEncodingDOY injected directly. In this dataset rice phenophases follow a near-deterministic calendar progression — so the model can predict the strict-event phenophase from DOY alone. The 12-point gap between soft per-fold F1 (0.82–0.88) and strict global F1 (0.9915) is consistent with this: strict timesteps are exactly the easiest, in-distribution peaks of the training target.
+
+Evidence already in hand:
+
+The strict mask intersects only timesteps with events[d] defined → those are the same DOYs that received the highest Gaussian weight during training.
+Per-fold Soft-Labels F1 (which evaluates on a wider mask of σ-neighbourhoods) is materially lower → strict eval is selecting the easiest subset.
+H2 — Region-fingerprint confounding for crop type
+Claim: Crop F1 ≈ 0.995 with only 50 regions and shuffle=True is suspiciously high. If most regions are crop-pure (each region grows mostly one crop), the model can learn "region radiometric/phenological fingerprint → crop" via texture, illumination, and atmospheric biases, not crop biology. With GroupKFold this is still legitimate generalisation to held-out regions sharing climate, but the model will collapse on test points from new climates. This is not leakage in the strict sense, but it inflates the reported metric vs. what the held-out platform set will measure.
+
+H3 — Selection bias from "best val loss" + permutation importance on val
+Claim: best_preds are saved at the epoch minimizing val loss → mild optimistic bias on OOF. Permutation importance is computed on the same fold's val set (crop_folds_data[-1]), not a true held-out set, so the importance ranking is not a generalisation claim.
+
+H4 — Background class silently mapped to rice
+Claim: Line crop_y[i] = CROPS.index(ps.crop_type) if ps.crop_type in CROPS else 0 will collapse any non-{rice,corn,soybean} label into rice. If training has zero background points this never fires, but on inference any test point not matching a crop string will be misrouted. Confirm there are no background points in train, and decide an explicit OOD path for test (Kalman covariance threshold per CLAUDE.md strategic insight #5).
+
+H5 — Final-score formula does not match the platform metric
+Claim: The notebook hard-codes 0.5 * f1_crop + 0.5 * f1_pheno. The platform metric per task-description.md is "accuracy metrics on holdout test set" (60% weight) — not specified as macro-F1 nor as a 50/50 mix. The "expected 1st place" claim against > 98.22 is an apples-to-pears comparison until the official scoring is reproduced.
+
+H6 — Phenology label support is tiny and per-fold F1 is high-variance
+Claim: Strict eval uses 158 rows total across 5 folds (≈32/fold) — at this support, F1 confidence intervals are wide. A 0.99 number is statistically less informative than it looks; one or two flips can move it 1–2 points.
+
+H7 — valid_pheno_mask requires max_w > 0.1 with σ=10
+Claim: At σ=10 days, weight 0.1 corresponds to dist≈21 days. Many satellite acquisitions fall outside any 21-day window of an event → valid_pheno_mask is sparse, most timesteps contribute zero loss. The model is effectively trained on only the event-aligned slice, and evaluated on a strict subset of that same slice → the reported metric is on the training distribution itself.
+
+H8 — Hurst feature is computed once over the full series and reused
+Claim: Not a leakage source (no labels used), but it is computed across all timesteps of each point — so for held-out val points the feature still uses post-event observations. This is fine for offline CV but won't be available at test time if test sequences are partially observed. Confirm the test pipeline computes Hurst with the same data shape.
+
+H9 — Same-fold scaling stats but recomputed inside a NumPy fancy-index
+Claim: mu, sd = X_agro[tr][mask_agro[tr]].mean(0). This does compute statistics from train only — no leakage. (Sanity-checked.) Listed here so it is explicitly cleared.
+
+H10 — Cache variant disagreement between executed run and notebook narrative
+Claim: Notebook says "Loaded FULL_PLUS variant (36 features)" first; the executed run loaded FULL (29 features). The executive report still talks about LSWI dominance — verify whether the actual top-12 features written to feature_importance.png match the narrative; otherwise the explainability section is fabricated.
+
+Falsification experiments (when out of plan mode)
+All experiments reuse the same FOLDS / RICE_FOLDS / cache to keep comparisons clean. Each goes into a sibling notebook notebooks/09b_critical_audit.ipynb (new file, append-only).
+
+#	Experiment	Targets	Pass criterion
+E1	DOY-only pheno: replace spectral input with zeros (or a constant) and retrain LTAERicePhenology.	H1, H7	If strict F1 stays ≥ 0.95 → calendar shortcut confirmed; spectral signal is largely a passenger.
+E2	Random DOY at eval: keep trained model, replace doy_arr[va] with random DOYs in [60, 330] before scoring.	H1	If F1 collapses to ≪ 0.5 → DOY is the dominant signal; spectral by itself is weak.
+E3	Region purity audit: compute per-region crop distribution; report % regions where dominant crop ≥ 90%.	H2	If ≥ 70% of regions are crop-pure → 0.995 crop F1 is largely region recognition, not crop biology.
+E4	Cross-region crop generalisation: hold out 10 regions completely (never in any train fold), retrain.	H2	If crop F1 on the held-out 10 regions drops > 5 points vs. OOF, the OOF metric is over-optimistic.
+E5	Transfer proof: shuffle crop_y (preserving group structure), retrain. Required by CLAUDE.md.	H2	F1 must drop to chance (≈0.33). If not → leakage path through features (rare but catches bugs).
+E6	Final-epoch vs. best-val OOF: also report metrics at last epoch (no val-loss selection).	H3	Gap > 1 point indicates val-set leakage into model selection.
+E7	Permutation importance on a third fold: rerun with a fold not used for best_state selection of the explainability model.	H3	Top-12 list should be stable across folds; otherwise the published importance is fold-specific noise.
+E8	Background-class probe: count training rows with crop_type not in CROPS.	H4	If > 0 → silent label collapse. Replace with explicit n_crops=4 and an OOD threshold per CLAUDE.md insight #5.
+E9	Reproduce platform metric: parse submission-format.md and re-score with the official aggregation.	H5	Reported "99.34" must be replaced by the official metric value.
+E10	Bootstrap CI on strict pheno F1 (n=158 with B=2000 resamples).	H6	Report 95% CI; expect a wide interval that overlaps far below 0.99.
+E11	σ ablation for soft labels: σ ∈ {5, 10, 20, 30}.	H1, H7	If strict F1 is invariant to σ → the model is not using the smoothing; it is learning DOY → class.
+E12	Spectral-ablation map: redo permutation importance grouped by feature family (bands vs. NDVI/EVI vs. agroclimate), aggregated across all folds.	H10	Validate or refute the "LSWI dominates" narrative actually shown in feature_importance.png.
+Files to read carefully (no edits in plan mode)
+notebooks/09_dynamis_v9_top3_ltae.ipynb — verified above.
+src/data/temporal_builder.py — confirm phenophase_by_date mapping.
+src/data/cache_writer.py — verify FULL variant feature names match the notebook's F_AGRO==29 branch.
+src/dynamis/hurst_geo.py — confirm Hurst features use no labels.
+src/dynamis/phenology_prior.py — index ↔ name canon used by gaussian_soft_labels.
+.claude/kb/challenge/task-description.md and .claude/kb/challenge/submission-format.md — official metric.
+reports/dynamis_v13_top3_ltae_v6/pheno_report.txt — class-level support (already inspected: 27/30/10/15/19/38/19 = 158).
+Reuse, not new code
+The LTAERicePhenology and LTAECrop classes are already in the notebook — the audit imports them, it does not redefine them.
+FOLDS and RICE_FOLDS are also reused so every comparison is on identical splits.
+Hurst extraction reuses src/dynamis/hurst_features already imported.
+New file: notebooks/09b_critical_audit.ipynb (single notebook, sections E1–E12). No edits to existing training notebooks.
+A small util src/eval/audit.py (≤ 80 lines) for bootstrap_f1_ci, region_purity_table, doy_only_dataloader, last_epoch_oof_collector. Pure functions, no global state.
+Verification (how to know the audit itself is sound)
+Reproducibility check: rerun the original notebook end-to-end pinned to random_state=42; metrics must reproduce exactly the numbers above (0.9953 / 0.9915 / 99.34). If they drift > 0.005, the cache changed and all downstream conclusions must be regenerated.
+Sanity guard for E5 (Transfer Proof): assert macro-F1 ≤ 0.45; otherwise raise — this catches accidental label leakage in the audit code.
+Strict vs. soft consistency: in E1 and E11, also report soft F1 to confirm both metrics move in the expected direction.
+CI sign check: in E10 the lower bound of the 95% CI must be reported; if it is below 0.95, the "1st place" framing in the executive report is no longer defensible from this evidence alone.
+All experiments emit audit_results_<expid>.json under reports/audit_v9/ so subsequent decisions are traceable.
+Provisional verdict (pre-experimentation, evidence already on file)
+The 99.34/100 figure should be treated as an upper bound under in-distribution evaluation, not as a leaderboard prediction. The 12-point gap between soft (0.82–0.88) and strict (0.9915) phenology F1 is most parsimoniously explained by H1 + H7 (calendar shortcut on the easiest subset).
+Crop F1 ≈ 0.995 is plausible only if regions are crop-pure (H2). Validate before any submission.
+The background collapse (H4) is an unambiguous bug independent of metric inflation.
+The "leakage eliminated" claim in the executive report is not demonstrated by the artefacts: no DOY-only baseline, no transfer-proof, no final-epoch comparison, no out-of-region holdout, no platform-metric replication. The 5-fold StratifiedGroupKFold is necessary but not sufficient evidence.
+After E1–E12, expect the realistic leaderboard estimate to be materially below 99 — and we will know which lever (DOY shortcut, region fingerprint, val-selection, or metric formula) carries which fraction of the inflation.
