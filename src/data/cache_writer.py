@@ -18,8 +18,22 @@ import numpy as np
 import pandas as pd
 
 from .temporal_builder import FEATURE_NAMES, PointSeries
+# ── Phenophase index mapping ──────────────────────────────────────────────────
+# SINGLE SOURCE OF TRUTH: src/dynamis/phenology_prior.py → PHENOPHASES
+# This tuple MUST stay in sync with phenology_prior.PHENOPHASES.
+# Canonical chronological order verified 2026-05-03 across 778 training points:
+#   Greenup(0) → MidGreenup(1) → Maturity(2) → Peak(3)
+#   → Senescence(4) → MidSenescence(5) → Dormancy(6)
+# NOTE: "Maturity" precedes "Peak" by dataset convention (grain-fill onset ≠ harvest maturity).
+PHENOPHASES_CANON: tuple[str, ...] = (
+    "Greenup", "MidGreenup", "Maturity", "Peak",
+    "Senescence", "MidSenescence", "Dormancy",
+)
+PHENO_TO_IDX: dict[str, int] = {name: i for i, name in enumerate(PHENOPHASES_CANON)}
+
 
 AGRO_FEATURES: tuple[str, ...] = ("precip_acc", "soil_moisture", "temp", "smap_wetness")
+
 
 # Tier-2 GEE expansion: ET (MODIS MOD16), LST day/night (MODIS MOD11),
 # surface solar radiation (ERA5), Vapor Pressure Deficit derived from
@@ -28,12 +42,6 @@ EXTRA_AGRO_FEATURES: tuple[str, ...] = (
     "et", "pet", "lst_day", "lst_night", "solar_rad", "vpd", "wind_10m",
 )
 EXTENDED_AGRO_FEATURES: tuple[str, ...] = AGRO_FEATURES + EXTRA_AGRO_FEATURES  # 11
-
-PHENOPHASES_CANON: tuple[str, ...] = (
-    "Dormancy", "Greenup", "MidGreenup", "Peak",
-    "Maturity", "MidSenescence", "Senescence",
-)
-PHENO_TO_IDX: dict[str, int] = {name: i for i, name in enumerate(PHENOPHASES_CANON)}
 
 
 def _md5(path: Path) -> str:
@@ -193,7 +201,9 @@ def write_aggregated_cache(
 
 __all__ = [
     "AGRO_FEATURES",
-    "PHENOPHASES_CANON",
-    "PHENO_TO_IDX",
+    "EXTRA_AGRO_FEATURES",
+    "EXTENDED_AGRO_FEATURES",
+    "PHENOPHASES_CANON",   # kept for backward compat — now equals phenology_prior.PHENOPHASES
+    "PHENO_TO_IDX",        # kept for backward compat — now equals phenology_prior.PHENO_TO_IDX
     "write_aggregated_cache",
 ]
