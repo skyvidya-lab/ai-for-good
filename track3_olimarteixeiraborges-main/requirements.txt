@@ -1,3 +1,5 @@
 lightgbm
 hilbertcurve
 tqdm
+rasterio
+pandas
