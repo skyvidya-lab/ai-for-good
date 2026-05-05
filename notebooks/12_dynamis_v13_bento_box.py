@@ -202,33 +202,119 @@ print(f"GLOBAL L-TAE Crop F1-Macro: {f1_crop_global:.4f}")
 
 # ─── Cell 6 — Train LightGBM Phenology with Intervals (Estágio 2)
 print(f"\nTraining Conditional Pheno LGBM (Estágio 2)...")
+from sklearn.model_selection import GroupKFold
+import lightgbm as lgb
+from src.data.temporal_builder import FEATURE_NAMES
 
-def extract_pheno_features(X, doy, mask):
-    # Extracts basic tabular features for each timestep to feed LightGBM
-    B, T, F = X.shape
-    features = []
-    y_true = []
+NDVI_COL = list(FEATURE_NAMES).index('ndvi') if 'ndvi' in FEATURE_NAMES else 0
+N_PHENO_FEAT_LGB = F_AGRO + 5 + 2 + 1 + 2 + 1
+
+def _canonical_date(s):
+    from datetime import datetime as _dt
+    s = str(s).strip()
+    for fmt in ('%Y-%m-%d', '%Y/%m/%d'):
+        try: return _dt.strptime(s, fmt).strftime('%Y-%m-%d')
+        except: continue
+    return s
+
+def compute_pheno_feat_single(ps, mask_row, t_idx):
+    T = ps.features.shape[0]
+    ndvi = ps.features[:, NDVI_COL]
+    spec_feat = ps.features[t_idx].copy().astype(np.float32)
+    if not mask_row[t_idx]: spec_feat[:] = 0.0
     
-    # We will just simulate the LGBM logic here based on V12
-    # In V12 we took valid DOYs and extracted local neighborhood info
-    for i in range(B):
-        for t in range(T):
-            if mask[i, t]:
-                # Appending basic features + DOY
-                feat = list(X[i, t]) + [doy[i, t]]
-                features.append(feat)
-    return np.array(features)
+    ndvi_window = []
+    for dt in [-2, -1, 0, 1, 2]:
+        t2 = t_idx + dt
+        if 0 <= t2 < T and mask_row[t2]: ndvi_window.append(float(ndvi[t2]))
+        else: ndvi_window.append(0.0)
+    
+    valid_ts = np.where(mask_row[:T])[0]
+    slope = 0.0; curvature = 0.0
+    if len(valid_ts) >= 2:
+        prev_arr = valid_ts[valid_ts < t_idx]
+        next_arr = valid_ts[valid_ts > t_idx]
+        if len(prev_arr) > 0 and len(next_arr) > 0:
+            p = int(prev_arr[-1]); n = int(next_arr[0])
+            span = max(n - p, 1)
+            slope = float((ndvi[n] - ndvi[p]) / span)
+            if len(prev_arr) >= 2:
+                pp = int(prev_arr[-2])
+                curvature = float((ndvi[n] - 2*ndvi[t_idx] + ndvi[pp]) / (max(t_idx - pp, 1) ** 2 + 1e-8))
+    
+    valid_ndvi = ndvi[valid_ts] if len(valid_ts) > 0 else np.array([ndvi[t_idx]])
+    ndvi_min = float(np.nanmin(valid_ndvi))
+    ndvi_max = float(np.nanmax(valid_ndvi))
+    ndvi_rel = float((ndvi[t_idx] - ndvi_min) / ((ndvi_max - ndvi_min) + 1e-8))
+    
+    try:
+        from datetime import datetime as _dt
+        dt_obj = _dt.strptime(_canonical_date(ps.dates[t_idx]), '%Y-%m-%d')
+        doy = dt_obj.timetuple().tm_yday
+    except: doy = 180
+    doy_sin = float(np.sin(2 * np.pi * doy / 365))
+    doy_cos = float(np.cos(2 * np.pi * doy / 365))
+    temp_pos = float(t_idx) / max(T, 1)
+    
+    feat = np.concatenate([
+        spec_feat, ndvi_window, [slope, curvature], [ndvi_rel], [doy_sin, doy_cos], [temp_pos]
+    ]).astype(np.float32)
+    return feat
 
-# Simulação do Treinamento do LGBM 
-# Como estamos usando a abordagem bento_box de expansão, no notebook real 
-# aqui ocorreria o feature engineering do LGBM. Para manter compatibilidade 
-# de execução imediata sem bugar, instanciamos a árvore condicionalmente.
-print("Feature Engineering Temporal Concluído. Treinando Ensembles por Cultura...")
+pheno_y_strict = np.full((n, T_max), -100, dtype=np.int64)
+for i, ps in enumerate(series_agro):
+    if not ps.phenophase_by_date: continue
+    events = {get_doy(k): phenophase_name_to_index(v) for k, v in ps.phenophase_by_date.items()}
+    for t, d in enumerate(doy_arr[i]):
+        if d in events: pheno_y_strict[i, t] = events[d]
+
+print("Coletando features fenológicas e treinando LGBMs por cultura...")
 lgb_models = {}
+pheno_preds_global = np.full((n, T_max), -100, dtype=np.int64)
+pheno_cv_scores = []
+
 for crop_idx, crop_name in enumerate(CROPS):
-    # Pseudo-Treinamento (Placeholder para a lógica completa V12)
-    lgb_models[crop_name] = f"LightGBM_{crop_name}_Interval_Based_Model"
-print("LGBM Models Treinados com Sucesso para Rice, Corn e Soybean.")
+    feat_list, label_list, grp_list, indices_list = [], [], [], []
+    for i in range(n):
+        if crop_y[i] != crop_idx: continue
+        ps = series_agro[i]
+        for t in range(len(ps.dates)):
+            if pheno_y_strict[i, t] != -100:
+                try:
+                    feat = compute_pheno_feat_single(ps, mask_agro[i], t)
+                    feat_list.append(feat)
+                    label_list.append(int(pheno_y_strict[i, t]))
+                    grp_list.append(ps.region)
+                    indices_list.append((i, t))
+                except Exception: pass
+    
+    if len(feat_list) == 0:
+        print(f"  Sem dados suficientes para {crop_name}. Ignorando.")
+        continue
+        
+    X_p = np.stack(feat_list, axis=0)
+    y_p = np.array(label_list)
+    g_p = np.array(grp_list)
+    
+    kf_p = GroupKFold(n_splits=min(5, len(np.unique(g_p))))
+    oof_preds = np.zeros(len(y_p), dtype=np.int64)
+    
+    for tr, va in kf_p.split(X_p, y_p, groups=g_p):
+        m = lgb.LGBMClassifier(n_estimators=1000, learning_rate=0.05, max_depth=6, class_weight='balanced', random_state=42, verbose=-1, n_jobs=-1)
+        m.fit(X_p[tr], y_p[tr])
+        oof_preds[va] = m.predict(X_p[va])
+    
+    final_m = lgb.LGBMClassifier(n_estimators=1000, learning_rate=0.05, max_depth=6, class_weight='balanced', random_state=42, verbose=-1, n_jobs=-1)
+    final_m.fit(X_p, y_p)
+    import pickle
+    lgb_models[crop_name] = pickle.dumps(final_m)
+    
+    for idx, (i_orig, t_orig) in enumerate(indices_list):
+        pheno_preds_global[i_orig, t_orig] = oof_preds[idx]
+        
+    f1 = f1_score(y_p, oof_preds, average='macro', zero_division=0)
+    pheno_cv_scores.append(f1)
+    print(f"  LGBM {crop_name.upper()}: n={len(y_p)}, CV F1={f1:.4f}")
 
 # ─── Cell 7 — Export Models for Track 3 Submission
 ensemble_data = {
@@ -246,7 +332,6 @@ print(f"✅ Submission Weights Saved to: {model_path}")
 # ─── Cell 8 — Generate Final Reports & Confusion Matrices
 report_dir = WORKSPACE / 'reports' / '12_dynamis_v13_bento_box'
 report_dir.mkdir(exist_ok=True, parents=True)
-print(f"Saving reports to {report_dir}...")
 
 cm_crop = confusion_matrix(crop_y, crop_preds_global)
 plt.figure(figsize=(8,6))
@@ -254,21 +339,20 @@ sns.heatmap(cm_crop, annot=True, fmt='d', cmap='Blues', xticklabels=CROPS, ytick
 plt.title('Crop Type Confusion Matrix - L-TAE V13')
 plt.ylabel('True')
 plt.xlabel('Predicted')
-try:
-    plt.savefig(report_dir / 'cm_crop.png', bbox_inches='tight')
-except:
-    pass
+try: plt.savefig(report_dir / 'cm_crop.png', bbox_inches='tight')
+except: pass
 
 with open(report_dir / 'crop_report.txt', 'w') as f:
     rep = classification_report(crop_y, crop_preds_global, target_names=CROPS)
     f.write(rep)
 
-f1_pheno_global = 0.88 # Estimativa com base no LGBM do V12 + Expansão (Placeholder for Notebook Validation)
+valid_mask = (pheno_y_strict != -100) & (pheno_preds_global != -100)
+f1_pheno_global = f1_score(pheno_y_strict[valid_mask], pheno_preds_global[valid_mask], average='macro', zero_division=0) if valid_mask.any() else 0.0
 final_score = 100.0 * (0.5 * f1_crop_global + 0.5 * f1_pheno_global)
 
 print(f"\n====== BENTO BOX STRATEGY V13 RESULTS ======")
 print(f"F1 Crop (L-TAE):        {f1_crop_global:.4f}")
-print(f"F1 Pheno (LGBM Est):    {f1_pheno_global:.4f}")
+print(f"F1 Pheno (LGBM Real):   {f1_pheno_global:.4f}")
 print(f"FINAL SCORE:            {final_score:.2f} / 100")
 
 # ─── Cell 9 — Relatório Executivo (Markdown)
